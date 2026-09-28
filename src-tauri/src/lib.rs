@@ -539,9 +539,13 @@ async fn stop_recording(state: tauri::State<'_, pipeline::PipelineHandle>) -> Re
 }
 
 #[tauri::command]
-fn abort_recording(state: tauri::State<'_, pipeline::PipelineHandle>) -> Result<(), String> {
-    state.abort();
-    Ok(())
+async fn abort_recording(state: tauri::State<'_, pipeline::PipelineHandle>) -> Result<(), String> {
+    let pipeline = state.inner().clone();
+    // Abort can wait for lifecycle work that dispatches tray updates to the main
+    // thread. Keep the IPC handler off that thread while it acquires the lock.
+    tauri::async_runtime::spawn_blocking(move || pipeline.abort())
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[cfg(any(target_os = "linux", test))]
