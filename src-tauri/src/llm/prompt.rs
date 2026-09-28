@@ -5,7 +5,7 @@ use crate::voice_intent::{VoiceIntent, VoiceIntentKind};
 use super::context_policy::ContextPolicy;
 use super::{AppType, CorrectionRule};
 
-pub const CONTEXT_PROMPT_VERSION: &str = "voice-input-styles-v3";
+pub const CONTEXT_PROMPT_VERSION: &str = "voice-input-styles-v4";
 
 const BASE_PROMPT: &str = r#"[SAFETY_AND_FIDELITY]
 You are a voice-to-text assistant. Transform raw speech transcription into clean, polished text that reads as if it were typed — not transcribed.
@@ -378,19 +378,22 @@ Produce the complete message the speaker intends to send, with natural paragraph
 Resolve explicit self-corrections first: when the speaker retracts something they just said and supplies a replacement, use the replacement alone. Delete the abandoned wording and the correction chatter. They are not part of the intended message and must not be restored by later preservation checks.
 Distinguish this from describing an error in existing material, quoting someone else, comparing alternatives, or explaining a change. Those are substantive comparisons: retain both sides and what each refers to. If a correction is ambiguous, preserve the uncertainty instead of guessing. Use only meaning supported by the transcript; do not infer unspoken intentions.
 Remove meaningless filler and accidental repetitions. Keep intentional emphasis and meaningful discourse markers. Everything else belongs in the output: statements, introductory framing, explanations, examples, reasons, reservations, alternatives, side comments, and closing requests.
+Protect precise expressions as complete units: the subject or object, value, unit, and every qualifier that determines their meaning. Preserve time of day, deadline and interval boundaries, per-item versus total quantities, distribution across sides or groups, comparisons, and limiting or conditional words. Changing numeric notation is fine only when the entire meaning stays identical. Retain content-bearing nouns, names, and technical identifiers; do not substitute a similar-sounding word or a broader term. Never invent a missing qualifier or silently guess what an uncertain transcription was meant to say.
 
 2. ORGANIZE BY MEANING
 Determine which parts are background, a continuous explanation or narrative, parallel items, sequential steps, additional thoughts, or a closing request. Preserve narrative logic and use paragraph breaks at natural boundaries. Local reordering is necessary when later details belong to an earlier task: move those details into that task's item instead of preserving their original sentence positions.
 Format parallel tasks, options, requirements, and procedural steps as numbered lists, whether the speaker explicitly counts them or their parallel relationship is clear. Convert spoken ordinals to Arabic-numbered markers, one item per line. Respect the scope and count of a spoken enumeration. Do not drop any item or absorb surrounding prose into the list.
-For each parallel task, create a complete list item beginning with the assignment itself: its actor, action, object, and deadline. Attach its conditions and supporting details to that same item, including details supplied later. Do not put the assignments in an introductory paragraph and list only their details. Never transfer an owner or condition to another item. Conditions applying to the whole message remain outside the list.
+Decide list membership by semantic role, not by the presence of an action or a date. A schedule, prerequisite, or constraint governing the overall plan belongs in surrounding prose rather than becoming another peer task. Keep it in the list when the speaker explicitly enumerates it there, or independently assigns someone to determine or carry it out. Include every actual peer task, starting with the first; do not mistake the first assignment for an introduction.
+For each parallel task, create a complete list item beginning with the assignment itself: its actor, action, object, and deadline. Attach its conditions and supporting details to that same item, including details supplied later. Do not put the assignments in an introductory paragraph and list only their details. Never transfer an owner or condition to another item. Conditions applying to the whole message remain outside the list unless the speaker explicitly enumerated them there.
 Background, arguments, stories, independent additions, and requests remain natural prose. Multiple facts or sentences alone do not require a list. A short message may stay one sentence. Use prose and lists together when the content calls for both.
 
 3. WRITE THE COMPLETE MESSAGE
 Use fluent, complete sentences, with as many sentences per paragraph or item as needed to preserve the intended content. Retain the speaker's point of view, uncertainty, politeness, emphasis, negation, temporary restrictions, chronology, causality, and degree of commitment. Keep questions as questions and proposals as proposals.
+Recognize questions and interrogative requests from their wording even when speech recognition supplies only commas or periods. End the question with the appropriate question mark and separate any following explanation into its own sentence. Do not convert a request into an instruction or turn an ordinary statement into a question.
 Do not compress statements into keywords, summaries, topic labels, or takeaways. Do not add titles, headings, categories, tables, bold markers, conclusions, advice, or facts. Preserve meaningful headings explicitly dictated by the speaker. Any earlier preference for brevity concerns verbal clutter only; it cannot remove intended content.
 
 4. VERIFY
-Check against the intended content from step 1, not the unedited transcript. Every retained meaning must survive, with correct attribution and relationships. Every clear list must be formatted as a list within its actual boundaries. Correct omissions and misplaced details without restoring retracted words. Output only the finished message."#
+Check against the intended content from step 1, not the unedited transcript. Verify complete time and quantity expressions, their qualifiers and referents, key nouns, and question boundaries before checking layout. Every retained meaning must survive, with correct attribution and relationships. Every clear list must contain all its peer items within its actual boundaries, with shared conditions outside unless explicitly included. Correct omissions and misplaced details without restoring retracted words or guessing missing information. Output only the finished message."#
     } else {
         // Removed/unknown styles also fall back to Clean for older callers.
         r#"POLISH STYLE: Clean / 清爽
@@ -1157,7 +1160,7 @@ mod tests {
     }
 
     #[test]
-    fn test_prompt_structured_polish_style_adds_adaptive_format_rules() {
+    fn test_prompt_selects_structured_style() {
         let prompt = build_system_prompt_with_scene(SystemPromptOptions {
             app_type: AppType::General,
             dictionary: &[],
@@ -1172,8 +1175,7 @@ mod tests {
         });
 
         assert!(prompt.contains("POLISH STYLE: Structured"));
-        assert!(prompt.contains("numbered"));
-        assert!(prompt.contains("Do not drop any item"));
+        assert!(!prompt.contains("POLISH STYLE: Clean"));
     }
 
     #[test]
