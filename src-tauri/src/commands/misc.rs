@@ -610,7 +610,7 @@ fn accessibility_diagnostic_row(
         diagnostic_row(
             "accessibility",
             DiagnosticStatus::Error,
-            "Accessibility permission is required for the Fn shortcut or keyboard output",
+            "Accessibility permission is required for dictation and Escape cancellation",
             Some("openAccessibilitySettings"),
             checked_at,
         )
@@ -618,25 +618,10 @@ fn accessibility_diagnostic_row(
 }
 
 fn config_requires_accessibility_permission(
-    config: &storage::AppConfig,
+    _config: &storage::AppConfig,
     caps: &platform::PlatformCapabilities,
 ) -> bool {
-    if caps.os != "macos" {
-        return false;
-    }
-
-    config.output_mode == "keyboard" || config_uses_macos_native_hotkey(config)
-}
-
-fn config_uses_macos_native_hotkey(config: &storage::AppConfig) -> bool {
-    let hotkeys = effective_hotkey_config(config);
-    crate::hotkey::hotkey_registration_plan_from_config_for_platform(&hotkeys, "macos")
-        .map(|plan| {
-            plan.native.iter().any(|registered| {
-                registered.trigger == crate::native_hotkey::NativeHotkeyTrigger::Fn
-            })
-        })
-        .unwrap_or(false)
+    caps.os == "macos"
 }
 
 fn hotkey_diagnostic_row(
@@ -1641,6 +1626,27 @@ mod tests {
             accessibility.action.as_deref(),
             Some("openAccessibilitySettings")
         );
+    }
+
+    #[test]
+    fn macos_global_only_shortcuts_still_require_accessibility_for_escape() {
+        let mut config = storage::AppConfig {
+            output_mode: "clipboard".to_string(),
+            hotkey: "Command+Shift+S".to_string(),
+            ask_hotkey: "Command+.".to_string(),
+            hotkey_mode: "toggle".to_string(),
+            ..storage::AppConfig::default()
+        };
+        config.hotkeys =
+            storage::HotkeyConfig::from_legacy("Command+Shift+S", "Command+.", "toggle");
+        let caps = platform::PlatformCapabilities {
+            os: "macos".to_string(),
+            session_type: "unknown".to_string(),
+            global_hotkey_reliable: true,
+            keyboard_output_reliable: true,
+            clipboard_auto_paste_reliable: true,
+        };
+        assert!(config_requires_accessibility_permission(&config, &caps));
     }
 
     #[test]

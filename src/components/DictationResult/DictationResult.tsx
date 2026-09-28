@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { listen } from '@tauri-apps/api/event'
-import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
   copyPendingDictationResult,
   dismissPendingDictationResult,
@@ -23,18 +22,19 @@ export function DictationResult() {
   const [feedback, setFeedback] = useState('')
   const [busy, setBusy] = useState(false)
   const [loadError, setLoadError] = useState(false)
+  const latestRefresh = useRef(0)
   const selected = results.find((item) => item.sessionId === selectedId) ?? results[0]
 
   const refresh = useCallback(async () => {
+    const request = ++latestRefresh.current
     try {
       const pending = await listPendingDictationResults()
+      if (request !== latestRefresh.current) return
       setResults(pending)
       setSelectedId((id) => pending.find((item) => item.sessionId === id)?.sessionId ?? pending[0]?.sessionId ?? null)
       setLoadError(false)
-      return pending
     } catch {
-      setLoadError(true)
-      return null
+      if (request === latestRefresh.current) setLoadError(true)
     }
   }, [])
 
@@ -52,6 +52,7 @@ export function DictationResult() {
     })
     return () => {
       active = false
+      latestRefresh.current += 1
       unlisten?.()
     }
   }, [refresh])
@@ -88,8 +89,7 @@ export function DictationResult() {
     try {
       await dismissPendingDictationResult(selected.sessionId)
       setFeedback('')
-      const pending = await refresh()
-      if (pending?.length === 0) await getCurrentWindow().hide()
+      await refresh()
     } catch {
       setFeedback('关闭失败，请重试。')
     } finally {

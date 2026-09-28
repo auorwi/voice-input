@@ -39,6 +39,19 @@ impl PendingDictationResults {
         results.len()
     }
 
+    pub fn dismiss_and_hide_if_empty(
+        &self,
+        session_id: &str,
+        hide: impl FnOnce() -> Result<(), String>,
+    ) -> Result<usize, String> {
+        let mut results = self.0.lock().unwrap_or_else(|error| error.into_inner());
+        results.retain(|item| item.session_id != session_id);
+        if results.is_empty() {
+            hide()?;
+        }
+        Ok(results.len())
+    }
+
     pub fn copy_with(
         &self,
         session_id: &str,
@@ -79,10 +92,16 @@ pub fn dismiss_pending_dictation_result(
     app: tauri::AppHandle,
     state: tauri::State<'_, PendingDictationResults>,
     session_id: String,
-) -> usize {
-    let remaining = state.dismiss(&session_id);
+) -> Result<usize, String> {
+    let window = app.get_webview_window("dictation-result");
+    let remaining = state.dismiss_and_hide_if_empty(&session_id, || {
+        if let Some(window) = &window {
+            window.hide().map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    })?;
     let _ = app.emit("dictation-result:changed", ());
-    remaining
+    Ok(remaining)
 }
 
 pub fn publish_result(app: &tauri::AppHandle, text: &str, reason: &str) -> Result<String, String> {
@@ -169,5 +188,30 @@ mod tests {
         );
         assert_eq!(copied, "完整文字");
         assert_eq!(store.list().len(), 1);
+    }
+
+    #[test]
+    fn close_hides_only_when_the_authoritative_queue_is_empty() {
+        let store = PendingDictationResults::default();
+        store.publish(result("old", "第一段"));
+        store.publish(result("new", "第二段"));
+        let mut hides = 0;
+        assert_eq!(
+            store.dismiss_and_hide_if_empty("old", || {
+                hides += 1;
+                Ok(())
+            }),
+            Ok(1)
+        );
+        assert_eq!(hides, 0);
+        assert_eq!(store.list(), vec![result("new", "第二段")]);
+        assert_eq!(
+            store.dismiss_and_hide_if_empty("new", || {
+                hides += 1;
+                Ok(())
+            }),
+            Ok(0)
+        );
+        assert_eq!(hides, 1);
     }
 }

@@ -123,11 +123,9 @@ impl NativeHotkeyRuntime {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let _ = inner.monitor.take();
 
-        if bindings.is_empty() {
-            return Ok(());
+        if let Some(bindings) = monitor_bindings_for_platform(std::env::consts::OS, bindings) {
+            inner.monitor = Some(platform::PlatformNativeMonitor::start(bindings, handler)?);
         }
-
-        inner.monitor = Some(platform::PlatformNativeMonitor::start(bindings, handler)?);
         Ok(())
     }
 
@@ -135,6 +133,13 @@ impl NativeHotkeyRuntime {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let _ = inner.monitor.take();
     }
+}
+
+fn monitor_bindings_for_platform(
+    platform: &str,
+    bindings: Vec<NativeHotkeyBinding>,
+) -> Option<Vec<NativeHotkeyBinding>> {
+    (platform == "macos" || !bindings.is_empty()).then_some(bindings)
 }
 
 type NativeHotkeyHandler = Arc<dyn Fn(NativeHotkeyEvent) + Send + Sync + 'static>;
@@ -423,10 +428,6 @@ mod platform {
             handler: NativeHotkeyHandler,
         ) -> Result<Self, String> {
             let bindings = monitored_bindings_for_base(bindings, NativeHotkeyTrigger::Fn);
-            if bindings.is_empty() {
-                return Err("macOS native hotkeys currently support Fn only".to_string());
-            }
-
             let handles = Arc::new(MacShutdownHandles::new());
             let thread_handles = Arc::clone(&handles);
             let (status_tx, status_rx) = mpsc::channel();
@@ -1020,12 +1021,23 @@ mod tests {
         assert_eq!(escape_event(49, true, &held), None);
     }
 
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn runtime_install_accepts_shared_handler_arc() {
         let runtime = NativeHotkeyRuntime::default();
         let handler: Arc<dyn Fn(NativeHotkeyEvent) + Send + Sync> = Arc::new(|_| {});
 
         assert!(runtime.install(Vec::new(), handler).is_ok());
+    }
+
+    #[test]
+    fn mac_escape_monitor_is_required_even_with_only_global_shortcuts() {
+        let global_only = Vec::new();
+        assert_eq!(
+            monitor_bindings_for_platform("macos", global_only),
+            Some(Vec::new())
+        );
+        assert_eq!(monitor_bindings_for_platform("windows", Vec::new()), None);
     }
 
     #[test]

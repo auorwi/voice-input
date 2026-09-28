@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DictationResult } from '../DictationResult'
 
@@ -23,6 +23,12 @@ vi.mock('@tauri-apps/api/window', () => ({
 
 const first = { sessionId: 'recording-1', text: '第一段完整文字。', reason: 'no_target' }
 const second = { sessionId: 'recording-2', text: '第二段完整文字。', reason: 'target_changed' }
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((finish) => { resolve = finish })
+  return { promise, resolve }
+}
 
 beforeEach(() => {
   native.invoke.mockReset()
@@ -81,6 +87,55 @@ describe('DictationResult', () => {
     })
     expect(native.hide).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: '关闭' }))
-    await waitFor(() => expect(native.hide).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(screen.queryByLabelText('完整识别文字')).not.toBeInTheDocument())
+    expect(native.hide).not.toHaveBeenCalled()
+  })
+
+  it('keeps a newer result visible when an older close list resolves empty last', async () => {
+    const oldList = deferred<typeof first[]>()
+    let listCount = 0
+    native.invoke.mockImplementation(async (name: string) => {
+      if (name === 'dismiss_pending_dictation_result') return 0
+      if (name === 'list_pending_dictation_results') {
+        listCount += 1
+        if (listCount === 1) return [first]
+        if (listCount === 2) return oldList.promise
+        return [second]
+      }
+    })
+    render(<DictationResult />)
+    await screen.findByDisplayValue(first.text)
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }))
+    await waitFor(() => expect(listCount).toBe(2))
+    await act(async () => { native.listeners.get('dictation-result:changed')?.({ payload: null }) })
+    expect(await screen.findByDisplayValue(second.text)).toBeInTheDocument()
+    await act(async () => { oldList.resolve([]); await oldList.promise })
+    expect(screen.getByDisplayValue(second.text)).toBeInTheDocument()
+    expect(native.hide).not.toHaveBeenCalled()
+  })
+
+  it('discards a stale list while dismissal and a newer publish overlap', async () => {
+    const dismissal = deferred<number>()
+    const oldList = deferred<typeof first[]>()
+    let listCount = 0
+    native.invoke.mockImplementation(async (name: string) => {
+      if (name === 'dismiss_pending_dictation_result') return dismissal.promise
+      if (name === 'list_pending_dictation_results') {
+        listCount += 1
+        if (listCount === 1) return [first]
+        if (listCount === 2) return oldList.promise
+        return [second]
+      }
+    })
+    render(<DictationResult />)
+    await screen.findByDisplayValue(first.text)
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }))
+    await act(async () => { native.listeners.get('dictation-result:changed')?.({ payload: null }) })
+    await waitFor(() => expect(listCount).toBe(2))
+    await act(async () => { dismissal.resolve(1); await dismissal.promise })
+    expect(await screen.findByDisplayValue(second.text)).toBeInTheDocument()
+    await act(async () => { oldList.resolve([first]); await oldList.promise })
+    expect(screen.getByDisplayValue(second.text)).toBeInTheDocument()
+    expect(native.hide).not.toHaveBeenCalled()
   })
 })
