@@ -1,4 +1,5 @@
 use anyhow::Result;
+use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::Emitter;
@@ -197,6 +198,87 @@ fn should_finalize_stt_task(
 ) -> bool {
     !abort_flag.load(Ordering::SeqCst)
         && active_session_id.load(Ordering::SeqCst) == task_session_id
+}
+
+/// Identifies a recording before its first asynchronous startup step. Lifecycle
+/// transitions and final cleanup share this lock, so an older stop cannot reset
+/// a newer recording after checking its identity.
+#[derive(Clone, Default)]
+struct PipelineSessionLifecycle(Arc<Mutex<u64>>);
+
+impl PipelineSessionLifecycle {
+    fn begin_if_idle(
+        &self,
+        state: &AtomicU8,
+        abort_flag: &AtomicBool,
+        on_begin: impl FnOnce(),
+    ) -> Option<u64> {
+        let mut generation = self.0.lock().unwrap_or_else(|error| error.into_inner());
+        state
+            .compare_exchange(
+                PipelineState::Idle.as_u8(),
+                PipelineState::Preparing.as_u8(),
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            )
+            .ok()?;
+        *generation += 1;
+        abort_flag.store(false, Ordering::SeqCst);
+        on_begin();
+        Some(*generation)
+    }
+
+    fn cancel_with(&self, abort_flag: &AtomicBool, on_cancel: impl FnOnce()) {
+        let mut generation = self.0.lock().unwrap_or_else(|error| error.into_inner());
+        *generation += 1;
+        abort_flag.store(true, Ordering::SeqCst);
+        on_cancel();
+    }
+
+    fn claim_recording(&self, state: &AtomicU8, on_claim: impl FnOnce()) -> Option<u64> {
+        let generation = self.0.lock().unwrap_or_else(|error| error.into_inner());
+        state
+            .compare_exchange(
+                PipelineState::Recording.as_u8(),
+                PipelineState::Transcribing.as_u8(),
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            )
+            .ok()?;
+        on_claim();
+        Some(*generation)
+    }
+
+    fn with_current<T>(&self, session_id: u64, f: impl FnOnce() -> T) -> Option<T> {
+        let generation = self.0.lock().unwrap_or_else(|error| error.into_inner());
+        (*generation == session_id).then(f)
+    }
+
+    fn is_current(&self, session_id: u64) -> bool {
+        self.with_current(session_id, || ()).is_some()
+    }
+
+    fn lock_current(&self, session_id: u64) -> Option<std::sync::MutexGuard<'_, u64>> {
+        let guard = self.0.lock().unwrap_or_else(|error| error.into_inner());
+        (*guard == session_id).then_some(guard)
+    }
+
+    async fn resolve_provider_result<T, E, F>(
+        &self,
+        session_id: Option<u64>,
+        abort_flag: &AtomicBool,
+        provider: F,
+    ) -> Option<std::result::Result<T, E>>
+    where
+        F: Future<Output = std::result::Result<T, E>>,
+    {
+        let result = provider.await;
+        match session_id {
+            Some(session_id) => self.with_current(session_id, || result),
+            None if !abort_flag.load(Ordering::SeqCst) => Some(result),
+            None => None,
+        }
+    }
 }
 
 fn no_speech_user_error() -> crate::error::UserError {
@@ -510,6 +592,8 @@ impl StreamingInsertWorker {
 fn spawn_streaming_insert_worker(
     app_handle: tauri::AppHandle,
     abort_flag: Arc<AtomicBool>,
+    session_lifecycle: PipelineSessionLifecycle,
+    run_id: Option<u64>,
     context_detector: app_detector::ContextDetectorHandle,
     strategy: output::InsertionStrategy,
     windows_sendinput_options: output::windows_sendinput::WindowsSendInputOptions,
@@ -521,6 +605,8 @@ fn spawn_streaming_insert_worker(
         StreamingInsertWorkerContext {
             app_handle,
             abort_flag,
+            session_lifecycle,
+            run_id,
             context_detector,
             strategy,
             windows_sendinput_options,
@@ -535,6 +621,8 @@ fn spawn_streaming_insert_worker(
 struct StreamingInsertWorkerContext {
     app_handle: tauri::AppHandle,
     abort_flag: Arc<AtomicBool>,
+    session_lifecycle: PipelineSessionLifecycle,
+    run_id: Option<u64>,
     context_detector: app_detector::ContextDetectorHandle,
     strategy: output::InsertionStrategy,
     windows_sendinput_options: output::windows_sendinput::WindowsSendInputOptions,
@@ -549,6 +637,8 @@ async fn run_streaming_insert_worker(
     let StreamingInsertWorkerContext {
         app_handle,
         abort_flag,
+        session_lifecycle,
+        run_id,
         context_detector,
         strategy,
         windows_sendinput_options,
@@ -558,7 +648,10 @@ async fn run_streaming_insert_worker(
     let mut report = StreamingInsertReport::new(strategy);
 
     while let Some(chunk) = receiver.recv().await {
-        if abort_flag.load(Ordering::SeqCst) {
+        if match run_id {
+            Some(id) => !session_lifecycle.is_current(id),
+            None => abort_flag.load(Ordering::SeqCst),
+        } {
             break;
         }
         if chunk.is_empty() {
@@ -710,6 +803,7 @@ pub struct PipelineHandle {
     active_stt_session_id: Arc<AtomicU64>,
     active_deadline_session_id: Arc<AtomicU64>,
     abort_flag: Arc<AtomicBool>,
+    session_lifecycle: PipelineSessionLifecycle,
     preloaded_config: Arc<Mutex<Option<storage::AppConfig>>>,
     preloaded_app_ctx: Arc<Mutex<Option<RecordingContext>>>,
     preloaded_dictionary: Arc<Mutex<Option<Vec<String>>>>,
@@ -739,6 +833,7 @@ struct PolishTextInput<'a> {
     operation_id: Option<String>,
     voice_intent: crate::voice_intent::VoiceIntent,
     popup_fallback_enabled: bool,
+    run_id: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -826,6 +921,7 @@ struct PipelineVoiceExecutionBackend<'a> {
     already_copied: bool,
     popup_fallback_enabled: bool,
     initial_focus: Option<output::focused_input::FocusedInput>,
+    run_id: Option<u64>,
 }
 
 fn ordinary_output_focus(
@@ -839,6 +935,9 @@ fn ordinary_output_focus(
 #[async_trait::async_trait]
 impl crate::voice_intent::executor::VoiceExecutionBackend for PipelineVoiceExecutionBackend<'_> {
     fn target_matches(&mut self, guard: &TargetAppGuard) -> bool {
+        if !self.pipeline.run_is_current(self.run_id) {
+            return false;
+        }
         if self.initial_focus.is_some() {
             return true;
         }
@@ -851,6 +950,9 @@ impl crate::voice_intent::executor::VoiceExecutionBackend for PipelineVoiceExecu
         &mut self,
         guard: &TargetAppGuard,
     ) -> std::result::Result<bool, String> {
+        if !self.pipeline.run_is_current(self.run_id) {
+            return Err("dictation session was cancelled".to_string());
+        }
         if let Some(window) = self.pipeline.app_handle.get_webview_window("ask") {
             let _ = window.hide();
         }
@@ -870,6 +972,7 @@ impl crate::voice_intent::executor::VoiceExecutionBackend for PipelineVoiceExecu
                 self.target_guard,
                 self.config,
                 self.initial_focus,
+                self.run_id,
             )
             .await
             .map_err(|error| error.to_string())?;
@@ -891,17 +994,24 @@ impl crate::voice_intent::executor::VoiceExecutionBackend for PipelineVoiceExecu
         if !self.popup_fallback_enabled {
             return Err("popup fallback is owned by the Ask caller".to_string());
         }
-        crate::commands::ask::show_answer_window_with_metadata(
-            &self.pipeline.app_handle,
-            self.question.to_string(),
-            text.to_string(),
-            self.intent_kind,
-            true,
-            false,
-        )
+        self.pipeline
+            .with_current_run(self.run_id, || {
+                crate::commands::ask::show_answer_window_with_metadata(
+                    &self.pipeline.app_handle,
+                    self.question.to_string(),
+                    text.to_string(),
+                    self.intent_kind,
+                    true,
+                    false,
+                )
+            })
+            .unwrap_or_else(|| Err("dictation session was cancelled".to_string()))
     }
 
     async fn copy_to_clipboard(&mut self, text: &str) -> std::result::Result<(), String> {
+        if !self.pipeline.run_is_current(self.run_id) {
+            return Err("dictation session was cancelled".to_string());
+        }
         if self.already_copied {
             return Ok(());
         }
@@ -915,6 +1025,7 @@ impl crate::voice_intent::executor::VoiceExecutionBackend for PipelineVoiceExecu
                 &TargetAppGuard::default(),
                 &copy_config,
                 None,
+                self.run_id,
             )
             .await
             .map_err(|error| error.to_string())?;
@@ -978,6 +1089,23 @@ impl PolishTextOutcome {
 }
 
 impl PipelineHandle {
+    fn with_current_run<T>(&self, run_id: Option<u64>, f: impl FnOnce() -> T) -> Option<T> {
+        match run_id {
+            Some(id) => self.session_lifecycle.with_current(id, f),
+            None if !self.abort_flag.load(Ordering::SeqCst) => Some(f()),
+            None => None,
+        }
+    }
+
+    fn run_is_current(&self, run_id: Option<u64>) -> bool {
+        self.with_current_run(run_id, || ()).is_some()
+    }
+
+    fn set_state_for_run(&self, run_id: Option<u64>, state: PipelineState) -> bool {
+        self.with_current_run(run_id, || self.set_state(state))
+            .is_some()
+    }
+
     pub fn new(
         app_handle: tauri::AppHandle,
         shared_client: reqwest::Client,
@@ -995,6 +1123,7 @@ impl PipelineHandle {
             active_stt_session_id: Arc::new(AtomicU64::new(0)),
             active_deadline_session_id: Arc::new(AtomicU64::new(0)),
             abort_flag: Arc::new(AtomicBool::new(false)),
+            session_lifecycle: PipelineSessionLifecycle::default(),
             preloaded_config: Arc::new(Mutex::new(None)),
             preloaded_app_ctx: Arc::new(Mutex::new(None)),
             preloaded_dictionary: Arc::new(Mutex::new(None)),
@@ -1073,42 +1202,42 @@ impl PipelineHandle {
             self.current_state()
         );
 
-        // Set abort flag so any running stop() exits early
-        self.abort_flag.store(true, Ordering::SeqCst);
-        self.active_stt_session_id.fetch_add(1, Ordering::SeqCst);
-        self.active_deadline_session_id.store(0, Ordering::SeqCst);
+        self.session_lifecycle.cancel_with(&self.abort_flag, || {
+            self.active_stt_session_id.fetch_add(1, Ordering::SeqCst);
+            self.active_deadline_session_id.store(0, Ordering::SeqCst);
 
-        // Stop audio capture (closes channel → STT task terminates naturally)
-        {
-            let mut handle = self.audio_handle.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(ref mut h) = *handle {
-                h.stop();
+            // Stop audio capture (closes channel → STT task terminates naturally)
+            {
+                let mut handle = self.audio_handle.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some(ref mut h) = *handle {
+                    h.stop();
+                }
+                *handle = None;
             }
-            *handle = None;
-        }
-        if let Some(control) = self
-            .stt_session
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
-        {
-            control.abort.notify_one();
-            control.done.notify_one();
-        }
+            if let Some(control) = self
+                .stt_session
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone()
+            {
+                control.abort.notify_one();
+                control.done.notify_one();
+            }
 
-        // Clear accumulated text
-        self.accumulated_text
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clear();
-        *self.stt_error.lock().unwrap_or_else(|e| e.into_inner()) = None;
-        *self
-            .cloud_operation_id
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()) = None;
+            // Clear accumulated text
+            self.accumulated_text
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clear();
+            *self.stt_error.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            *self
+                .cloud_operation_id
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = None;
 
-        // Force state to Idle — emits pipeline:state event to sync frontend
-        self.set_state(PipelineState::Idle);
+            // Force state to Idle — emits pipeline:state event to sync frontend
+            self.set_state(PipelineState::Idle);
+        });
     }
 
     fn clear_stt_session(&self, session_id: u64) {
@@ -1143,24 +1272,15 @@ impl PipelineHandle {
         // partially-initialised state (preloaded_config, audio_handle, etc.).
         let _guard = self.pipeline_lock.lock().await;
 
-        // Reset abort flag for new recording
-        self.abort_flag.store(false, Ordering::SeqCst);
-
-        // Atomic CAS: only one caller can transition Idle → Preparing. Recording is emitted only
-        // after audio capture is ready, so the capsule does not tell users to speak too early.
-        if self
-            .state
-            .compare_exchange(
-                PipelineState::Idle.as_u8(),
-                PipelineState::Preparing.as_u8(),
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-            )
-            .is_err()
-        {
+        // Allocate this run's identity at Idle → Preparing, before any await.
+        let Some(run_id) =
+            self.session_lifecycle
+                .begin_if_idle(&self.state, &self.abort_flag, || {
+                    self.set_state(PipelineState::Preparing)
+                })
+        else {
             return Ok(());
-        }
-        self.set_state(PipelineState::Preparing);
+        };
 
         // Clear accumulated text
         self.accumulated_text
@@ -1171,6 +1291,9 @@ impl PipelineHandle {
 
         // P0-2: Load config BEFORE starting audio capture — fail fast on missing API key
         let config_data = apply_pipeline_start_options(self.load_config().await, options);
+        if !self.session_lifecycle.is_current(run_id) {
+            return Ok(());
+        }
         let voice_mode = if options.force_translate {
             crate::voice_intent::VoiceMode::Translate
         } else {
@@ -1209,6 +1332,9 @@ impl PipelineHandle {
                 enabled: rule.enabled,
             })
             .collect::<Vec<_>>();
+        if !self.session_lifecycle.is_current(run_id) {
+            return Ok(());
+        }
         *self
             .preloaded_dictionary
             .lock()
@@ -1428,6 +1554,10 @@ impl PipelineHandle {
             provider.connect(&stt_config),
         )
         .await;
+        if !self.session_lifecycle.is_current(run_id) {
+            handle.stop();
+            return Ok(());
+        }
         let capture_ready_at = match startup_result {
             Ok(capture_ready_at) => capture_ready_at,
             Err(error) => {
@@ -1467,62 +1597,15 @@ impl PipelineHandle {
             }
         };
 
-        // Store the audio handle's volume reference.
-        // Check abort_flag first — if abort() was called while we were connecting
-        // to STT, don't store the handle (it would be orphaned with nobody to stop it).
-        if self.abort_flag.load(Ordering::SeqCst) {
-            tracing::info!("Pipeline aborted during setup, discarding audio capture");
-            // handle drops here, stopping the capture thread
-            *self
-                .preloaded_config
-                .lock()
-                .unwrap_or_else(|e| e.into_inner()) = None;
-            *self
-                .preloaded_app_ctx
-                .lock()
-                .unwrap_or_else(|e| e.into_inner()) = None;
-            *self
-                .preloaded_dictionary
-                .lock()
-                .unwrap_or_else(|e| e.into_inner()) = None;
-            *self
-                .preloaded_correction_rules
-                .lock()
-                .unwrap_or_else(|e| e.into_inner()) = None;
-            self.set_state(PipelineState::Idle);
+        // Abort and the final startup writes share the lifecycle lock. A cancelled
+        // startup must never leave a handle or Recording state behind after abort.
+        let Some(_current_session) = self.session_lifecycle.lock_current(run_id) else {
+            handle.stop();
             return Ok(());
-        }
+        };
         let audio_vol = handle.get_volume();
         *self.audio_volume.lock().unwrap_or_else(|e| e.into_inner()) = audio_vol;
         *self.audio_handle.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
-        if self.abort_flag.load(Ordering::SeqCst) {
-            tracing::info!("Pipeline aborted after storing audio capture, stopping capture");
-            {
-                let mut handle = self.audio_handle.lock().unwrap_or_else(|e| e.into_inner());
-                if let Some(ref mut h) = *handle {
-                    h.stop();
-                }
-                *handle = None;
-            }
-            *self
-                .preloaded_config
-                .lock()
-                .unwrap_or_else(|e| e.into_inner()) = None;
-            *self
-                .preloaded_app_ctx
-                .lock()
-                .unwrap_or_else(|e| e.into_inner()) = None;
-            *self
-                .preloaded_dictionary
-                .lock()
-                .unwrap_or_else(|e| e.into_inner()) = None;
-            *self
-                .preloaded_correction_rules
-                .lock()
-                .unwrap_or_else(|e| e.into_inner()) = None;
-            self.set_state(PipelineState::Idle);
-            return Ok(());
-        }
 
         let session_id = self.active_stt_session_id.fetch_add(1, Ordering::SeqCst) + 1;
         let resolved_limit = stt::capabilities::resolve_recording_limit(
@@ -1837,23 +1920,15 @@ impl PipelineHandle {
         // Released before the long stt_done wait so start() isn't blocked 120s.
         let guard = self.pipeline_lock.lock().await;
 
-        // Atomic CAS: only one caller can transition Recording → Transcribing
-        if self
-            .state
-            .compare_exchange(
-                PipelineState::Recording.as_u8(),
-                PipelineState::Transcribing.as_u8(),
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-            )
-            .is_err()
-        {
+        // Claim this recording and its immutable run ID in one lifecycle transition.
+        let Some(run_id) = self.session_lifecycle.claim_recording(&self.state, || {
+            self.active_deadline_session_id.store(0, Ordering::SeqCst);
+            let _ = self
+                .app_handle
+                .emit("pipeline:state", PipelineState::Transcribing);
+        }) else {
             return Ok(());
-        }
-        self.active_deadline_session_id.store(0, Ordering::SeqCst);
-        let _ = self
-            .app_handle
-            .emit("pipeline:state", PipelineState::Transcribing);
+        };
         let finalized_translation_target = self
             .active_translation_operation
             .lock()
@@ -1887,6 +1962,9 @@ impl PipelineHandle {
         } else {
             None
         };
+        if !self.session_lifecycle.is_current(run_id) {
+            return Ok(());
+        }
         tracing::info!(
             "Selected text result: len={}",
             selected_text.as_deref().map(|s| s.len()).unwrap_or(0)
@@ -1979,7 +2057,7 @@ impl PipelineHandle {
         drop(guard);
 
         // ── Phase 1: Wait for STT ──────────────────────────────────────
-        let raw_text = match self.wait_for_stt(stt_control.clone()).await? {
+        let raw_text = match self.wait_for_stt(stt_control.clone(), run_id).await? {
             Some(text) => text,
             None => {
                 if let Some(control) = &stt_control {
@@ -1997,7 +2075,7 @@ impl PipelineHandle {
         );
 
         // Check abort before entering LLM polish and output
-        if self.abort_flag.load(Ordering::SeqCst) {
+        if !self.session_lifecycle.is_current(run_id) {
             tracing::info!("Pipeline aborted before LLM/output");
             if let Some(control) = &stt_control {
                 self.clear_stt_session(control.id);
@@ -2019,8 +2097,15 @@ impl PipelineHandle {
                 operation_id,
                 voice_intent,
                 popup_fallback_enabled: true,
+                run_id: Some(run_id),
             })
             .await;
+        if !self.session_lifecycle.is_current(run_id) {
+            if let Some(control) = &stt_control {
+                self.clear_stt_session(control.id);
+            }
+            return Ok(());
+        }
         let final_text = polish_outcome.final_text;
         let llm_elapsed = polish_outcome.llm_elapsed;
 
@@ -2029,11 +2114,18 @@ impl PipelineHandle {
 
         // Compute recording duration
         let duration_ms = self
-            .recording_start
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take()
-            .map(|start| start.elapsed().as_millis() as i64);
+            .session_lifecycle
+            .with_current(run_id, || {
+                self.recording_start
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .take()
+                    .map(|start| start.elapsed().as_millis() as i64)
+            })
+            .flatten();
+        if !self.session_lifecycle.is_current(run_id) {
+            return Ok(());
+        }
 
         tracing::info!(
             "[Pipeline Timing] Total stop(): {}ms (STT: {}ms, LLM: {}ms, Output+Save: {}ms)",
@@ -2070,17 +2162,23 @@ impl PipelineHandle {
         )
         .await;
 
-        if let Some(control) = &stt_control {
-            self.clear_stt_session(control.id);
-        }
-        self.set_state(PipelineState::Idle);
+        self.session_lifecycle.with_current(run_id, || {
+            if let Some(control) = &stt_control {
+                self.clear_stt_session(control.id);
+            }
+            self.set_state(PipelineState::Idle);
+        });
         Ok(())
     }
 
     /// Wait for the STT task to complete and return the transcribed text.
     /// Returns `Ok(Some(text))` on success, `Ok(None)` if aborted or no speech,
     /// or `Err` on failure.
-    async fn wait_for_stt(&self, stt_control: Option<SttTaskControl>) -> Result<Option<String>> {
+    async fn wait_for_stt(
+        &self,
+        stt_control: Option<SttTaskControl>,
+        run_id: u64,
+    ) -> Result<Option<String>> {
         if let Some(control) = &stt_control {
             tokio::select! {
                 _ = control.done.notified() => {
@@ -2091,39 +2189,47 @@ impl PipelineHandle {
                 }
             }
 
-            if !should_finalize_stt_task(
-                self.abort_flag.as_ref(),
-                self.active_stt_session_id.as_ref(),
-                control.id,
-            ) {
+            if !self.session_lifecycle.is_current(run_id)
+                || !should_finalize_stt_task(
+                    self.abort_flag.as_ref(),
+                    self.active_stt_session_id.as_ref(),
+                    control.id,
+                )
+            {
                 tracing::info!("Ignoring stale or aborted STT task");
                 return Ok(None);
             }
             if take_matching_stt_error(&self.stt_error, control.id).is_some() {
-                self.set_state(PipelineState::Idle);
+                self.session_lifecycle
+                    .with_current(run_id, || self.set_state(PipelineState::Idle));
                 return Ok(None);
             }
         } else {
             tracing::warn!("No STT session was available to wait for");
         }
 
-        if self.abort_flag.load(Ordering::SeqCst) {
+        if !self.session_lifecycle.is_current(run_id) {
             tracing::info!("Pipeline aborted after STT wait");
             return Ok(None);
         }
 
-        let raw_text = self
-            .accumulated_text
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .trim()
-            .to_string();
+        let Some(raw_text) = self.session_lifecycle.with_current(run_id, || {
+            self.accumulated_text
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .trim()
+                .to_string()
+        }) else {
+            return Ok(None);
+        };
 
         if raw_text.is_empty() {
-            let _ = self
-                .app_handle
-                .emit("pipeline:error", no_speech_user_error());
-            self.set_state(PipelineState::Idle);
+            self.session_lifecycle.with_current(run_id, || {
+                let _ = self
+                    .app_handle
+                    .emit("pipeline:error", no_speech_user_error());
+                self.set_state(PipelineState::Idle);
+            });
             return Ok(None);
         }
 
@@ -2145,7 +2251,11 @@ impl PipelineHandle {
             operation_id,
             voice_intent,
             popup_fallback_enabled,
+            run_id,
         } = input;
+        if !self.run_is_current(run_id) {
+            return PolishTextOutcome::normal(String::new(), std::time::Duration::ZERO);
+        }
         let provider_plan =
             crate::voice_intent::plan_voice_provider_work(voice_mode, raw_text, &voice_intent);
         let Some(provider_text) = provider_plan.provider_input.as_deref() else {
@@ -2219,8 +2329,12 @@ impl PipelineHandle {
                     &app_ctx.target_guard,
                     config,
                     Some(app_ctx.focused_input),
+                    run_id,
                 )
                 .await;
+            if !self.run_is_current(run_id) {
+                return PolishTextOutcome::normal(String::new(), std::time::Duration::ZERO);
+            }
             if let Err(error) = &output_result {
                 tracing::error!("Output failed: {}", error);
                 let _ = self
@@ -2241,7 +2355,9 @@ impl PipelineHandle {
             };
         }
 
-        self.set_state(PipelineState::Polishing);
+        if !self.set_state_for_run(run_id, PipelineState::Polishing) {
+            return PolishTextOutcome::normal(String::new(), std::time::Duration::ZERO);
+        }
         let llm_start = std::time::Instant::now();
 
         let llm_config = LlmConfig {
@@ -2262,6 +2378,8 @@ impl PipelineHandle {
             spawn_streaming_insert_worker(
                 self.app_handle.clone(),
                 self.abort_flag.clone(),
+                self.session_lifecycle.clone(),
+                run_id,
                 self.context_detector.clone(),
                 strategy,
                 output::windows_sendinput::WindowsSendInputOptions {
@@ -2281,7 +2399,16 @@ impl PipelineHandle {
         // The callback remains synchronous for the LLM stream. UI updates happen
         // immediately; optional target-app insertion is drained by a worker.
         let app_handle = self.app_handle.clone();
+        let lifecycle = self.session_lifecycle.clone();
+        let abort_flag = self.abort_flag.clone();
         let on_chunk: llm::ChunkCallback = Box::new(move |chunk: &str| {
+            let current = match run_id {
+                Some(id) => lifecycle.is_current(id),
+                None => !abort_flag.load(Ordering::SeqCst),
+            };
+            if !current {
+                return;
+            }
             let _ = app_handle.emit("llm:chunk", chunk);
             if let Some(sender) = streaming_sender.as_ref() {
                 let _ = sender.send(chunk.to_string());
@@ -2315,12 +2442,25 @@ impl PipelineHandle {
             voice_intent: voice_intent.clone(),
         };
 
-        let polish_result = provider.polish(&llm_config, &req, Some(&on_chunk)).await;
+        let polish_result = self
+            .session_lifecycle
+            .resolve_provider_result(
+                run_id,
+                self.abort_flag.as_ref(),
+                provider.polish(&llm_config, &req, Some(&on_chunk)),
+            )
+            .await;
         drop(on_chunk);
         let streaming_report = match streaming_worker.take() {
             Some(worker) => worker.finish().await,
             None => None,
         };
+        let Some(polish_result) = polish_result else {
+            return PolishTextOutcome::normal(String::new(), llm_start.elapsed());
+        };
+        if !self.run_is_current(run_id) {
+            return PolishTextOutcome::normal(String::new(), llm_start.elapsed());
+        }
 
         let polish_outcome = match polish_result {
             Ok(response) => {
@@ -2490,7 +2630,7 @@ impl PipelineHandle {
                 }
 
                 // Check abort after LLM returns — skip output if cancelled during polish.
-                if self.abort_flag.load(Ordering::SeqCst) {
+                if !self.run_is_current(run_id) {
                     tracing::info!("Pipeline aborted after LLM polish, skipping output");
                     return PolishTextOutcome::normal(raw_text.to_string(), elapsed);
                 }
@@ -2517,6 +2657,7 @@ impl PipelineHandle {
                     already_copied: false,
                     popup_fallback_enabled,
                     initial_focus: ordinary_output_focus(voice_intent.kind, app_ctx.focused_input),
+                    run_id,
                 };
                 let execution = crate::voice_intent::executor::execute_voice_intent(
                     crate::voice_intent::executor::VoiceExecutionRequest {
@@ -2530,6 +2671,9 @@ impl PipelineHandle {
                     &mut backend,
                 )
                 .await;
+                if !self.run_is_current(run_id) {
+                    return PolishTextOutcome::normal(String::new(), elapsed);
+                }
                 let _ = self.app_handle.emit("pipeline:voice_execution", &execution);
 
                 let (history_status, history_error) = match execution.status {
@@ -2596,7 +2740,7 @@ impl PipelineHandle {
                 }
 
                 // Check abort after LLM error — skip fallback output if cancelled.
-                if self.abort_flag.load(Ordering::SeqCst) {
+                if !self.run_is_current(run_id) {
                     tracing::info!("Pipeline aborted after LLM error, skipping output");
                     return PolishTextOutcome::normal(String::new(), elapsed);
                 }
@@ -2622,8 +2766,12 @@ impl PipelineHandle {
                         &app_ctx.target_guard,
                         config,
                         Some(app_ctx.focused_input),
+                        run_id,
                     )
                     .await;
+                if !self.run_is_current(run_id) {
+                    return PolishTextOutcome::normal(String::new(), elapsed);
+                }
                 if let Err(output_error) = &output_result {
                     tracing::error!("Output failed: {}", output_error);
                     let _ = self
@@ -2635,13 +2783,17 @@ impl PipelineHandle {
                     .as_ref()
                     .is_ok_and(|result| result.status == output::InsertStatus::Inserted)
                 {
-                    if let Err(error) = crate::commands::dictation_result::publish_result(
-                        &self.app_handle,
-                        provider_text,
-                        "llm_raw_fallback",
-                    ) {
-                        tracing::error!("Failed to show raw transcript after LLM error: {error}");
-                    }
+                    self.with_current_run(run_id, || {
+                        if let Err(error) = crate::commands::dictation_result::publish_result(
+                            &self.app_handle,
+                            provider_text,
+                            "llm_raw_fallback",
+                        ) {
+                            tracing::error!(
+                                "Failed to show raw transcript after LLM error: {error}"
+                            );
+                        }
+                    });
                 }
                 let output_metadata = history_output_metadata_with_prior_error(
                     output_result.as_ref(),
@@ -2720,6 +2872,7 @@ impl PipelineHandle {
                 operation_id: Some(operation_id.to_string()),
                 voice_intent,
                 popup_fallback_enabled: false,
+                run_id: None,
             })
             .await;
         self.set_state(PipelineState::Idle);
@@ -2885,8 +3038,11 @@ impl PipelineHandle {
         target_guard: &TargetAppGuard,
         config: &storage::AppConfig,
         initial_focus: Option<output::focused_input::FocusedInput>,
+        run_id: Option<u64>,
     ) -> Result<output::InsertResult> {
-        self.set_state(PipelineState::Outputting);
+        if !self.set_state_for_run(run_id, PipelineState::Outputting) {
+            anyhow::bail!("dictation session was cancelled");
+        }
 
         let configured_strategy =
             output::InsertionStrategy::from_config_value(&config.insertion_strategy);
@@ -2898,7 +3054,7 @@ impl PipelineHandle {
             let same_app = self.context_detector.target_still_matches_now(target_guard);
             match output::focused_input::decide_destination(start, current, same_app) {
                 output::focused_input::DestinationDecision::Popup(reason) => {
-                    return Ok(self.show_pending_output(text, reason, configured_strategy));
+                    return Ok(self.show_pending_output(text, reason, configured_strategy, run_id));
                 }
                 output::focused_input::DestinationDecision::Insert => {}
             }
@@ -2909,6 +3065,7 @@ impl PipelineHandle {
                         text,
                         "unknown_target",
                         configured_strategy,
+                        run_id,
                     ))
                 }
             }
@@ -2968,6 +3125,10 @@ impl PipelineHandle {
             auto_paste: true,
         };
 
+        if !self.run_is_current(run_id) {
+            anyhow::bail!("dictation session was cancelled");
+        }
+
         let mut output_outcome = match output::output_with_strategy(
             &self.app_handle,
             text,
@@ -2991,17 +3152,21 @@ impl PipelineHandle {
                         text,
                         "output_failed",
                         configured_strategy,
+                        run_id,
                     ));
                 }
                 anyhow::bail!("{}", e)
             }
         };
+        if !self.run_is_current(run_id) {
+            anyhow::bail!("dictation session was cancelled");
+        }
 
         #[cfg(target_os = "macos")]
         if initial_focus.is_some()
             && configured_strategy == output::InsertionStrategy::ClipboardCopyOnly
         {
-            return Ok(self.show_pending_output(text, "copy_only", configured_strategy));
+            return Ok(self.show_pending_output(text, "copy_only", configured_strategy, run_id));
         }
         #[cfg(target_os = "macos")]
         if let Some(probe) = insertion_probe {
@@ -3021,8 +3186,11 @@ impl PipelineHandle {
                     confirmed,
                 )
             {
-                return Ok(self.show_pending_output(text, reason, configured_strategy));
+                return Ok(self.show_pending_output(text, reason, configured_strategy, run_id));
             }
+        }
+        if !self.run_is_current(run_id) {
+            anyhow::bail!("dictation session was cancelled");
         }
 
         if let Some(user_error) = target_warning.or(accessibility_warning) {
@@ -3037,20 +3205,41 @@ impl PipelineHandle {
             output_outcome.insert_result.chars_inserted
         );
         let insert_result = output_outcome.insert_result.clone();
-        let _ = self
-            .app_handle
-            .emit("pipeline:insert_result", &insert_result);
-
-        if let Some(user_error) = output_outcome.warning {
-            tracing::info!("Output completed with warning: {}", user_error.code);
-            let _ = self.app_handle.emit("pipeline:warning", &user_error);
+        if self
+            .with_current_run(run_id, || {
+                let _ = self
+                    .app_handle
+                    .emit("pipeline:insert_result", &insert_result);
+                if let Some(user_error) = output_outcome.warning {
+                    tracing::info!("Output completed with warning: {}", user_error.code);
+                    let _ = self.app_handle.emit("pipeline:warning", &user_error);
+                }
+                let _ = self.app_handle.emit("pipeline:target_app", app_name);
+            })
+            .is_none()
+        {
+            anyhow::bail!("dictation session was cancelled");
         }
-
-        let _ = self.app_handle.emit("pipeline:target_app", app_name);
         Ok(insert_result)
     }
 
     fn show_pending_output(
+        &self,
+        text: &str,
+        reason: &str,
+        strategy: output::InsertionStrategy,
+        run_id: Option<u64>,
+    ) -> output::InsertResult {
+        if let Some(id) = run_id {
+            return self
+                .session_lifecycle
+                .with_current(id, || self.publish_pending_output(text, reason, strategy))
+                .unwrap_or_else(|| output::InsertResult::failed(strategy));
+        }
+        self.publish_pending_output(text, reason, strategy)
+    }
+
+    fn publish_pending_output(
         &self,
         text: &str,
         reason: &str,
@@ -3170,6 +3359,86 @@ impl PipelineHandle {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, AtomicU64};
+    async fn cancelled_provider_completion_preserves_new_session(provider_succeeds: bool) {
+        let lifecycle = PipelineSessionLifecycle::default();
+        let state = AtomicU8::new(PipelineState::Idle.as_u8());
+        let abort_flag = AtomicBool::new(false);
+        let side_effects = Mutex::new(Vec::<String>::new());
+        let b_buffer = Mutex::new(Some("B recording".to_string()));
+
+        let a = lifecycle
+            .begin_if_idle(&state, &abort_flag, || {})
+            .expect("A starts");
+        lifecycle.with_current(a, || {
+            state.store(PipelineState::Recording.as_u8(), Ordering::SeqCst)
+        });
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
+        let late_provider = lifecycle.resolve_provider_result(Some(a), &abort_flag, async {
+            release_rx.await.unwrap();
+            if provider_succeeds {
+                Ok::<&str, &str>("A polished")
+            } else {
+                Err::<&str, &str>("A provider failed")
+            }
+        });
+        tokio::pin!(late_provider);
+        assert!(futures_util::poll!(&mut late_provider).is_pending());
+
+        lifecycle.cancel_with(&abort_flag, || {
+            state.store(PipelineState::Idle.as_u8(), Ordering::SeqCst);
+        });
+        let b = lifecycle
+            .begin_if_idle(&state, &abort_flag, || {})
+            .expect("B starts after cancelling A");
+        lifecycle.with_current(b, || {
+            state.store(PipelineState::Recording.as_u8(), Ordering::SeqCst)
+        });
+        release_tx.send(()).unwrap();
+        if let Some(result) = late_provider.await {
+            lifecycle.with_current(a, || match result {
+                Ok(text) => side_effects.lock().unwrap().push(format!("insert:{text}")),
+                Err(error) => side_effects.lock().unwrap().push(format!("popup:{error}")),
+            });
+        }
+        lifecycle.with_current(a, || {
+            b_buffer.lock().unwrap().take();
+            state.store(PipelineState::Idle.as_u8(), Ordering::SeqCst);
+        });
+        assert!(side_effects.lock().unwrap().is_empty());
+        assert_eq!(
+            state.load(Ordering::SeqCst),
+            PipelineState::Recording.as_u8()
+        );
+        assert_eq!(b_buffer.lock().unwrap().as_deref(), Some("B recording"));
+
+        let normal = lifecycle
+            .resolve_provider_result(Some(b), &abort_flag, async {
+                Ok::<&str, &str>("B polished")
+            })
+            .await;
+        if let Some(Ok(text)) = normal {
+            lifecycle.with_current(b, || {
+                side_effects.lock().unwrap().push(format!("insert:{text}"))
+            });
+        }
+        lifecycle.with_current(b, || {
+            b_buffer.lock().unwrap().take();
+            state.store(PipelineState::Idle.as_u8(), Ordering::SeqCst);
+        });
+        assert_eq!(*side_effects.lock().unwrap(), vec!["insert:B polished"]);
+        assert_eq!(state.load(Ordering::SeqCst), PipelineState::Idle.as_u8());
+        assert!(b_buffer.lock().unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn late_polish_success_after_cancel_does_not_output_or_finish_new_recording() {
+        cancelled_provider_completion_preserves_new_session(true).await;
+    }
+
+    #[tokio::test]
+    async fn late_polish_failure_after_cancel_does_not_fallback_or_finish_new_recording() {
+        cancelled_provider_completion_preserves_new_session(false).await;
+    }
 
     #[test]
     fn polished_dictation_uses_recording_element_gate_for_missing_or_changed_target() {
