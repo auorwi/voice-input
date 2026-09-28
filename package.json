@@ -1,7 +1,7 @@
 {
   "name": "opentypeless",
   "private": true,
-  "version": "1.1.60",
+  "version": "1.1.61",
   "type": "module",
   "description": "AI-powered speech-to-text and text polishing desktop app",
   "keywords": [
@@ -31,7 +31,13 @@
     "format": "prettier --write src/",
     "format:check": "prettier --check src/",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "signing:setup": "python3 scripts/macos_signing.py setup",
+    "signing:status": "python3 scripts/macos_signing.py status",
+    "build:mac": "python3 scripts/macos_signing.py build",
+    "signing:verify": "python3 scripts/macos_signing.py verify",
+    "signing:install": "python3 scripts/macos_signing.py install",
+    "test:signing": "python3 -m unittest discover -s scripts/tests -v"
   },
   "dependencies": {
     "@tauri-apps/api": "2.11.0",

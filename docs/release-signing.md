@@ -1,5 +1,9 @@
 # Release Signing Setup
 
+> This is the retained upstream distribution guide. For Voice Input personal
+> builds on your own Mac, use [Local macOS signing](local-macos-signing.md).
+> The local certificate is not an Apple Developer ID or a notarized distribution identity.
+
 OpenTypeless releases are built in `toverwu-qaq/opentypeless` and published to
 `tover0314-w/opentypeless`.
 

@@ -26,13 +26,16 @@ npm ci
 npm run tauri dev
 ```
 
-构建本机应用（本地临时签名，不含 Apple 公证）：
+构建日常使用的本机应用（固定本地证书签名，不含 Apple 公证）：
 
 ```bash
-npm run tauri build -- --bundles app --config '{"bundle":{"macOS":{"signingIdentity":"-"}}}'
+npm run signing:setup   # 首次在这台 Mac 上运行；重复执行会复用原身份
+npm run build:mac
 ```
 
-默认产物为 `src-tauri/target/release/bundle/macos/Voice Input.app`；若设置了 `CARGO_TARGET_DIR`，产物位于相应目录。日常使用保留一份应用，避免构建副本同时出现在系统搜索中。
+默认产物为 `src-tauri/target/release/bundle/macos/Voice Input.app`；若设置了绝对路径的 `CARGO_TARGET_DIR`，产物位于相应目录。退出旧应用后使用 `npm run signing:install -- "产物绝对路径" "固定安装绝对路径"` 安装。日常保留同一安装路径，避免构建副本同时出现在系统搜索中。
+
+构建和安装都会校验原有证书身份；证书丢失或变化时中止，不退回临时签名。首次从旧临时签名版本迁移、证书保存及回滚方法见 [本机固定签名说明](docs/local-macos-signing.md)。`tauri dev` 仍用于开发调试，不作为日常授权版本。
 
 ## 配置与权限
 
@@ -45,11 +48,9 @@ API 密钥通过 macOS 钥匙串保存。音频和相关文本会发送给你配
 
 ### 已授权但仍提示缺少辅助功能权限
 
-本地临时签名可能随重新构建而改变。如果系统开关已打开，而应用仍显示权限提示：
+旧版的临时签名会随重新构建改变，导致系统保留旧授权而新版本无法使用。从 1.1.61 起，日常构建使用固定证书身份；不要再使用 `signingIdentity: "-"`，也不要直接覆盖正在运行的应用。
 
-1. 退出 Voice Input，在系统的辅助功能列表中仅移除旧的 Voice Input 条目。
-2. 打开正在使用的那一份应用，点击应用内「授权」，让当前版本重新出现在列表中。
-3. 开启它的开关，按系统要求自行完成身份验证，然后重启应用。
+从旧签名迁移时需要一次重新授权，以后的同身份升级应保留权限。如果仍有异常，先核对正在运行的应用路径和 `npm run signing:verify -- "应用路径"`；仅在确认是旧授权记录时处理 Voice Input 自身的条目，避免反复重置权限。详见 [迁移与排查](docs/local-macos-signing.md#首次迁移与权限)。
 
 ## 验证
 
@@ -57,6 +58,7 @@ API 密钥通过 macOS 钥匙串保存。音频和相关文本会发送给你配
 npm test
 npm run lint
 npm run build
+npm run test:signing
 cargo fmt --check --manifest-path src-tauri/Cargo.toml
 cargo test --locked --manifest-path src-tauri/Cargo.toml
 ```

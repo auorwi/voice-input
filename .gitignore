@@ -56,3 +56,10 @@ docs/superpowers/
 
 # Local isolated worktrees
 .worktrees/
+
+# Local code-signing state and private key containers
+__pycache__/
+*.p12
+*.pfx
+*.key
+*.keychain-db
