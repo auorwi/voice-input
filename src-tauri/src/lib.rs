@@ -900,6 +900,16 @@ pub fn run() {
             }
             restore_main_window(app);
         }))
+        .on_window_event(|window, event| {
+            if window.label() == "dictation-result" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    // Keep uncopied edits in the renderer when the titlebar is closed.
+                    // The explicit result Close button dismisses only its selected entry.
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .setup(|app| {
             // Open devtools only when the "devtools" feature is explicitly enabled
             #[cfg(feature = "devtools")]

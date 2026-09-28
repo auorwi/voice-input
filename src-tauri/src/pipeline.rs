@@ -3058,7 +3058,7 @@ impl PipelineHandle {
                 }
                 output::focused_input::DestinationDecision::Insert => {}
             }
-            match output::focused_input::begin_insertion_probe(current) {
+            match output::focused_input::begin_insertion_probe(current, text) {
                 Some(probe) => Some(probe),
                 None => {
                     return Ok(self.show_pending_output(
@@ -3170,20 +3170,20 @@ impl PipelineHandle {
         }
         #[cfg(target_os = "macos")]
         if let Some(probe) = insertion_probe {
-            let mut confirmed = false;
-            if output_outcome.insert_result.status == output::InsertStatus::Inserted {
-                for _ in 0..3 {
-                    if output::focused_input::confirm_inserted_text(probe, text) {
-                        confirmed = true;
-                        break;
-                    }
-                    tokio::time::sleep(std::time::Duration::from_millis(60)).await;
-                }
-            }
+            let confirmation =
+                if output_outcome.insert_result.status == output::InsertStatus::Inserted {
+                    output::focused_input::wait_for_insertion_confirmation(|| {
+                        output::focused_input::confirm_inserted_text(&probe, text)
+                    })
+                    .await
+                } else {
+                    output::focused_input::InsertionConfirmation::Unavailable
+                };
+            tracing::debug!(?confirmation, "Automatic output readback completed");
             if let output::focused_input::DestinationDecision::Popup(reason) =
                 output::focused_input::decide_after_output(
                     output_outcome.insert_result.status,
-                    confirmed,
+                    confirmation,
                 )
             {
                 return Ok(self.show_pending_output(text, reason, configured_strategy, run_id));

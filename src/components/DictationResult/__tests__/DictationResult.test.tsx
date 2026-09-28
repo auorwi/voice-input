@@ -38,6 +38,56 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('DictationResult', () => {
+  it('lets the user edit multiline text and copies exactly the edited draft', async () => {
+    native.invoke.mockImplementation(async (name: string) =>
+      name === 'list_pending_dictation_results' ? [first] : undefined,
+    )
+    render(<DictationResult />)
+    const editor = await screen.findByRole('textbox', { name: '完整识别文字' })
+    expect(editor).not.toHaveAttribute('readonly')
+    fireEvent.change(editor, { target: { value: '修正后的文字\n第二行 🎙️' } })
+    fireEvent.click(screen.getByRole('button', { name: '复制' }))
+    await waitFor(() => expect(native.invoke).toHaveBeenCalledWith('copy_pending_dictation_result', {
+      sessionId: first.sessionId, editedText: '修正后的文字\n第二行 🎙️',
+    }))
+    expect(await screen.findByText('已复制')).toBeInTheDocument()
+  })
+
+  it('preserves independent drafts when new recordings arrive and selection changes', async () => {
+    let results = [first]
+    native.invoke.mockImplementation(async (name: string) =>
+      name === 'list_pending_dictation_results' ? results : undefined,
+    )
+    render(<DictationResult />)
+    const editor = await screen.findByRole('textbox')
+    fireEvent.change(editor, { target: { value: '第一条的草稿' } })
+    results = [first, second]
+    await act(async () => { native.listeners.get('dictation-result:changed')?.({ payload: null }) })
+    expect(screen.getByRole('textbox')).toHaveValue('第一条的草稿')
+    fireEvent.click(screen.getByRole('button', { name: /2.*第二段/ }))
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: '第二条的草稿' } })
+    fireEvent.click(screen.getByRole('button', { name: /1.*第一段/ }))
+    expect(screen.getByRole('textbox')).toHaveValue('第一条的草稿')
+    fireEvent.click(screen.getByRole('button', { name: /2.*第二段/ }))
+    expect(screen.getByRole('textbox')).toHaveValue('第二条的草稿')
+  })
+
+  it('does not claim a changed draft was copied when an earlier copy resolves', async () => {
+    const copying = deferred<void>()
+    native.invoke.mockImplementation(async (name: string) => {
+      if (name === 'list_pending_dictation_results') return [first, second]
+      if (name === 'copy_pending_dictation_result') return copying.promise
+    })
+    render(<DictationResult />)
+    await screen.findByDisplayValue(first.text)
+    fireEvent.click(screen.getByRole('button', { name: '复制' }))
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: '复制后又改过' } })
+    await act(async () => { copying.resolve(); await copying.promise })
+    expect(screen.queryByText('已复制')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /2.*第二段/ }))
+    expect(screen.queryByText('已复制')).not.toBeInTheDocument()
+  })
+
   it('retrieves a result that arrived before the renderer loaded', async () => {
     native.invoke.mockImplementation(async (name: string) =>
       name === 'list_pending_dictation_results' ? [first] : undefined,
@@ -59,12 +109,41 @@ describe('DictationResult', () => {
     })
     render(<DictationResult />)
     await screen.findByDisplayValue(first.text)
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: '失败也保留修改后的文字' } })
     fireEvent.click(screen.getByRole('button', { name: '复制' }))
     expect(await screen.findByText('复制失败，请选中文字手动复制。')).toBeInTheDocument()
-    expect(screen.getByDisplayValue(first.text)).toBeInTheDocument()
+    expect(screen.getByRole('textbox')).toHaveValue('失败也保留修改后的文字')
     fireEvent.click(screen.getByRole('button', { name: '复制' }))
     expect(await screen.findByText('已复制')).toBeInTheDocument()
+    expect(native.invoke).toHaveBeenLastCalledWith('copy_pending_dictation_result', {
+      sessionId: first.sessionId, editedText: '失败也保留修改后的文字',
+    })
     expect(native.hide).not.toHaveBeenCalled()
+  })
+
+  it('keeps an empty draft editable and disables copying until text is entered', async () => {
+    native.invoke.mockImplementation(async (name: string) =>
+      name === 'list_pending_dictation_results' ? [first] : undefined,
+    )
+    render(<DictationResult />)
+    const editor = await screen.findByRole('textbox')
+    fireEvent.change(editor, { target: { value: '' } })
+    expect(editor).toHaveValue('')
+    expect(screen.getByRole('button', { name: '复制' })).toBeDisabled()
+    fireEvent.change(editor, { target: { value: '重新输入' } })
+    expect(screen.getByRole('button', { name: '复制' })).toBeEnabled()
+  })
+
+  it('does not dismiss the editor when Escape cancels Chinese input composition', async () => {
+    native.invoke.mockImplementation(async (name: string) =>
+      name === 'list_pending_dictation_results' ? [first] : undefined,
+    )
+    render(<DictationResult />)
+    const editor = await screen.findByRole('textbox')
+    fireEvent.keyDown(editor, { key: 'Escape', isComposing: true })
+    fireEvent.keyDown(editor, { key: 'Escape', keyCode: 229 })
+    expect(native.invoke).not.toHaveBeenCalledWith('dismiss_pending_dictation_result', expect.anything())
+    expect(editor).toBeInTheDocument()
   })
 
   it('navigates consecutive results and closes each explicit session separately', async () => {

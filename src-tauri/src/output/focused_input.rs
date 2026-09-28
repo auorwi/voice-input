@@ -76,35 +76,125 @@ pub fn decide_destination(
 
 pub fn decide_after_output(
     status: crate::output::InsertStatus,
-    confirmed_text: bool,
+    confirmation: InsertionConfirmation,
 ) -> DestinationDecision {
-    if status == crate::output::InsertStatus::Inserted && confirmed_text {
+    if status == crate::output::InsertStatus::Inserted
+        && confirmation != InsertionConfirmation::NotInserted
+    {
         DestinationDecision::Insert
     } else {
         DestinationDecision::Popup("output_failed")
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InsertionConfirmation {
+    Confirmed,
+    NotInserted,
+    // Unsupported AX attributes, focus changes and read errors are not proof of failure.
+    Unavailable,
+}
+
+#[derive(Clone, Debug)]
 pub struct InsertionProbe {
     process_id: u32,
     element_id: u64,
-    location: isize,
+    selection: Option<(usize, usize)>,
+    before_value: Option<String>,
+    before_range: Option<String>,
 }
 
-pub fn begin_insertion_probe(focus: FocusedInput) -> Option<InsertionProbe> {
+fn normalized_lines(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+// AX selection offsets count UTF-16 units, not bytes or Unicode scalar values.
+fn expected_value(before: &str, selection: (usize, usize), text: &str) -> Option<String> {
+    let units: Vec<u16> = before.encode_utf16().collect();
+    let (start, length) = selection;
+    let end = start.checked_add(length)?;
+    let prefix = String::from_utf16(units.get(..start)?).ok()?;
+    let suffix = String::from_utf16(units.get(end..)?).ok()?;
+    Some(format!("{prefix}{text}{suffix}"))
+}
+
+fn assess_readback(
+    probe: &InsertionProbe,
+    text: &str,
+    after_value: Option<&str>,
+    after_range: Option<&str>,
+) -> InsertionConfirmation {
+    use InsertionConfirmation::*;
+    let expected = probe
+        .before_value
+        .as_deref()
+        .zip(probe.selection)
+        .and_then(|(before, selection)| expected_value(before, selection, text));
+    if let (Some(expected), Some(after)) = (expected.as_deref(), after_value) {
+        if normalized_lines(expected) == normalized_lines(after) {
+            return Confirmed;
+        }
+    }
+    // A matching range can be pre-existing text. An unchanged, readable field
+    // must not hide a failed insertion, unless the requested replacement is identical.
+    if let (Some(before), Some(after)) = (probe.before_value.as_deref(), after_value) {
+        if normalized_lines(before) == normalized_lines(after) {
+            return NotInserted;
+        }
+    }
+    if let Some(after) = after_range {
+        if normalized_lines(after) == normalized_lines(text) {
+            return if probe
+                .before_range
+                .as_deref()
+                .is_some_and(|before| normalized_lines(before) == normalized_lines(after))
+            {
+                Unavailable
+            } else {
+                Confirmed
+            };
+        }
+        return NotInserted;
+    }
+    if expected.is_some() && after_value.is_some() {
+        NotInserted
+    } else {
+        Unavailable
+    }
+}
+
+// Read again while slow editors process queued input. Never dispatch the text again.
+pub async fn wait_for_insertion_confirmation(
+    mut read: impl FnMut() -> InsertionConfirmation,
+) -> InsertionConfirmation {
+    let mut latest = InsertionConfirmation::Unavailable;
+    for delay_ms in [0, 40, 80, 160, 320, 400] {
+        if delay_ms > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+        }
+        latest = read();
+        if latest == InsertionConfirmation::Confirmed {
+            break;
+        }
+    }
+    // Use the final observation: an earlier stale value cannot prove failure
+    // if the editor subsequently replaced its accessibility element.
+    latest
+}
+
+pub fn begin_insertion_probe(focus: FocusedInput, text: &str) -> Option<InsertionProbe> {
     #[cfg(target_os = "macos")]
     {
-        macos::begin_probe(focus)
+        macos::begin_probe(focus, text)
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = focus;
+        let _ = (focus, text);
         None
     }
 }
 
-pub fn confirm_inserted_text(probe: InsertionProbe, text: &str) -> bool {
+pub fn confirm_inserted_text(probe: &InsertionProbe, text: &str) -> InsertionConfirmation {
     #[cfg(target_os = "macos")]
     {
         macos::confirm(probe, text)
@@ -112,7 +202,7 @@ pub fn confirm_inserted_text(probe: InsertionProbe, text: &str) -> bool {
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (probe, text);
-        false
+        InsertionConfirmation::Unavailable
     }
 }
 
@@ -130,7 +220,10 @@ pub fn capture_focused_input(process_id: Option<u32>) -> FocusedInput {
 
 #[cfg(target_os = "macos")]
 mod macos {
-    use super::{classify_focused_element, FocusKind, FocusedInput, InsertionProbe};
+    use super::{
+        assess_readback, classify_focused_element, FocusKind, FocusedInput, InsertionConfirmation,
+        InsertionProbe,
+    };
     use std::ffi::c_void;
 
     type CFRef = *const c_void;
@@ -162,6 +255,7 @@ mod macos {
         fn AXValueGetValue(value: CFRef, value_type: u32, result: *mut c_void) -> u8;
         fn CFStringCreateWithCString(allocator: CFRef, text: *const i8, encoding: u32) -> CFRef;
         fn CFStringGetCString(value: CFRef, buffer: *mut i8, size: isize, encoding: u32) -> u8;
+        fn CFStringGetLength(value: CFRef) -> isize;
         fn CFStringGetTypeID() -> usize;
         fn CFBooleanGetTypeID() -> usize;
         fn CFBooleanGetValue(value: CFRef) -> u8;
@@ -203,7 +297,11 @@ mod macos {
         if unsafe { CFGetTypeID(value) } != unsafe { CFStringGetTypeID() } {
             return None;
         }
-        let mut bytes = [0_i8; 256];
+        let length = unsafe { CFStringGetLength(value) };
+        if !(0..=1_048_576).contains(&length) {
+            return None;
+        }
+        let mut bytes = vec![0_i8; length as usize * 4 + 1];
         let ok =
             unsafe { CFStringGetCString(value, bytes.as_mut_ptr(), bytes.len() as isize, UTF8) };
         if ok == 0 {
@@ -260,7 +358,7 @@ mod macos {
         (ok != 0 && range.location >= 0 && range.length >= 0).then_some(range)
     }
 
-    pub(super) fn begin_probe(focus: FocusedInput) -> Option<InsertionProbe> {
+    pub(super) fn begin_probe(focus: FocusedInput, text: &str) -> Option<InsertionProbe> {
         if focus.kind != FocusKind::Editable {
             return None;
         }
@@ -270,55 +368,67 @@ mod macos {
         if Some(id) != focus.element_id {
             return None;
         }
-        let range = selected_range(element.0)?;
+        let selection =
+            selected_range(element.0).map(|range| (range.location as usize, range.length as usize));
+        let before_value = attribute(element.0, b"AXValue\0")
+            .ok()
+            .and_then(|value| string(value.0));
+        let before_range = selection.and_then(|(location, _)| {
+            range_string(element.0, location, text.encode_utf16().count())
+        });
+        // Without a readable selection the destination is still trusted; only
+        // post-insertion verification is less capable.
         Some(InsertionProbe {
             process_id: pid,
             element_id: id,
-            location: range.location,
+            selection,
+            before_value,
+            before_range,
         })
     }
 
-    pub(super) fn confirm(probe: InsertionProbe, text: &str) -> bool {
-        let utf16_len = text.encode_utf16().count();
-        if utf16_len == 0 || utf16_len > 16_384 {
-            return false;
-        }
-        let Some((_, element)) = focused_element(probe.process_id) else {
-            return false;
-        };
-        if unsafe { CFHash(element.0) } as u64 != probe.element_id {
-            return false;
+    fn range_string(element: CFRef, location: usize, length: usize) -> Option<String> {
+        if length == 0 || length > 1_048_576 {
+            return None;
         }
         let range = CFRange {
-            location: probe.location,
-            length: utf16_len as isize,
+            location: isize::try_from(location).ok()?,
+            length: length as isize,
         };
         let parameter = unsafe { AXValueCreate(4, (&range as *const CFRange).cast()) };
         if parameter.is_null() {
-            return false;
+            return None;
         }
         let parameter = OwnedCF(parameter);
-        let Some(name) = attribute_name(b"AXStringForRange\0") else {
-            return false;
-        };
+        let name = attribute_name(b"AXStringForRange\0")?;
         let mut value = std::ptr::null();
         let status = unsafe {
-            AXUIElementCopyParameterizedAttributeValue(element.0, name.0, parameter.0, &mut value)
+            AXUIElementCopyParameterizedAttributeValue(element, name.0, parameter.0, &mut value)
         };
         if status != 0 || value.is_null() {
             if !value.is_null() {
                 unsafe { CFRelease(value) };
             }
-            return false;
+            return None;
         }
         let value = OwnedCF(value);
-        if unsafe { CFGetTypeID(value.0) } != unsafe { CFStringGetTypeID() } {
-            return false;
+        string(value.0)
+    }
+
+    pub(super) fn confirm(probe: &InsertionProbe, text: &str) -> InsertionConfirmation {
+        let Some((_, element)) = focused_element(probe.process_id) else {
+            return InsertionConfirmation::Unavailable;
+        };
+        if unsafe { CFHash(element.0) } as u64 != probe.element_id {
+            return InsertionConfirmation::Unavailable;
         }
-        let mut bytes = vec![0_i8; utf16_len.saturating_mul(4).saturating_add(1)];
-        let ok =
-            unsafe { CFStringGetCString(value.0, bytes.as_mut_ptr(), bytes.len() as isize, UTF8) };
-        ok != 0 && unsafe { std::ffi::CStr::from_ptr(bytes.as_ptr()) }.to_bytes() == text.as_bytes()
+        let after_value = attribute(element.0, b"AXValue\0")
+            .ok()
+            .and_then(|value| string(value.0));
+        let after_range = probe.selection.and_then(|(location, _)| {
+            range_string(element.0, location, text.encode_utf16().count())
+        });
+        assess_readback(probe, text, after_value.as_deref(), after_range.as_deref())
     }
 
     pub(super) fn capture(process_id: Option<u32>) -> FocusedInput {
@@ -356,6 +466,169 @@ mod macos {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn probe(before: Option<&str>, selection: Option<(usize, usize)>) -> InsertionProbe {
+        InsertionProbe {
+            process_id: 42,
+            element_id: 7,
+            selection,
+            before_value: before.map(str::to_string),
+            before_range: None,
+        }
+    }
+
+    #[test]
+    fn full_value_confirms_when_parameterized_range_is_unsupported() {
+        let probe = probe(Some("前后"), Some((1, 0)));
+        assert_eq!(
+            assess_readback(&probe, "中", Some("前中后"), None),
+            InsertionConfirmation::Confirmed
+        );
+        assert_eq!(
+            decide_after_output(
+                crate::output::InsertStatus::Inserted,
+                assess_readback(&probe, "中", Some("前中后"), None)
+            ),
+            DestinationDecision::Insert
+        );
+    }
+
+    #[test]
+    fn replacement_uses_utf16_offsets_and_preserves_multiline_text() {
+        let probe = probe(Some("前🎙️旧文后"), Some((4, 2)));
+        assert_eq!(
+            assess_readback(&probe, "新\n文", Some("前🎙️新\r\n文后"), None),
+            InsertionConfirmation::Confirmed
+        );
+        assert_eq!(expected_value("😀后", (1, 0), "x"), None);
+        assert_eq!(expected_value("短", (20, 0), "x"), None);
+        assert_eq!(expected_value("短", (1, usize::MAX), "x"), None);
+    }
+
+    #[test]
+    fn unavailable_attributes_do_not_prevent_successful_dispatch() {
+        for probe in [
+            probe(None, None),
+            probe(None, Some((0, 0))),
+            probe(Some(""), Some((0, 0))),
+        ] {
+            let confirmation = assess_readback(&probe, "完整文字", None, None);
+            assert_eq!(confirmation, InsertionConfirmation::Unavailable);
+            assert_eq!(
+                decide_after_output(crate::output::InsertStatus::Inserted, confirmation),
+                DestinationDecision::Insert
+            );
+        }
+    }
+
+    #[test]
+    fn readable_unchanged_partial_and_incorrect_output_remain_recoverable() {
+        let probe = probe(Some(""), Some((0, 0)));
+        for after in ["", "完整", "错误文字", " 完整文字"] {
+            assert_eq!(
+                assess_readback(&probe, "完整文字", Some(after), None),
+                InsertionConfirmation::NotInserted
+            );
+        }
+        assert_eq!(
+            assess_readback(&probe, "完整文字", None, Some("完整")),
+            InsertionConfirmation::NotInserted
+        );
+    }
+
+    #[test]
+    fn range_readback_supports_editors_without_a_full_value() {
+        let probe = probe(None, Some((8, 0)));
+        assert_eq!(
+            assess_readback(&probe, "两\n行", None, Some("两\r行")),
+            InsertionConfirmation::Confirmed
+        );
+    }
+
+    #[test]
+    fn preexisting_matching_text_does_not_prove_a_new_insertion() {
+        let mut probe = probe(Some("重复文字"), Some((0, 0)));
+        probe.before_range = Some("重复文字".into());
+        assert_eq!(
+            assess_readback(&probe, "重复文字", Some("重复文字"), Some("重复文字")),
+            InsertionConfirmation::NotInserted
+        );
+        probe.before_value = None;
+        assert_eq!(
+            assess_readback(&probe, "重复文字", None, Some("重复文字")),
+            InsertionConfirmation::Unavailable
+        );
+    }
+
+    #[test]
+    fn identical_replacement_is_already_the_intended_result() {
+        let probe = probe(Some("前文字后"), Some((1, 2)));
+        assert_eq!(
+            assess_readback(&probe, "文字", Some("前文字后"), Some("文字")),
+            InsertionConfirmation::Confirmed
+        );
+    }
+
+    #[test]
+    fn long_output_can_be_confirmed_without_the_old_16k_limit() {
+        let text = "中文😀\n".repeat(5000);
+        assert_eq!(
+            assess_readback(&probe(Some(""), Some((0, 0))), &text, Some(&text), None),
+            InsertionConfirmation::Confirmed
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn delayed_editor_success_is_rechecked_without_reinsertion() {
+        use InsertionConfirmation::*;
+        let mut reads = [NotInserted, NotInserted, Unavailable, Confirmed].into_iter();
+        let start = tokio::time::Instant::now();
+        let confirmation =
+            wait_for_insertion_confirmation(|| reads.next().expect("stop on success")).await;
+        assert_eq!(confirmation, Confirmed);
+        assert_eq!(start.elapsed(), std::time::Duration::from_millis(280));
+        assert_eq!(
+            decide_after_output(crate::output::InsertStatus::Inserted, confirmation),
+            DestinationDecision::Insert
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn only_a_final_readable_failure_triggers_recovery() {
+        use InsertionConfirmation::*;
+        assert_eq!(
+            wait_for_insertion_confirmation(|| NotInserted).await,
+            NotInserted
+        );
+        assert_eq!(
+            wait_for_insertion_confirmation(|| Unavailable).await,
+            Unavailable
+        );
+        let mut reads = [
+            NotInserted,
+            NotInserted,
+            Unavailable,
+            Unavailable,
+            Unavailable,
+            Unavailable,
+        ]
+        .into_iter();
+        assert_eq!(
+            wait_for_insertion_confirmation(|| reads.next().unwrap()).await,
+            Unavailable
+        );
+    }
+
+    #[test]
+    fn unreadable_text_after_successful_dispatch_is_not_a_failed_insertion() {
+        assert_eq!(
+            decide_after_output(
+                crate::output::InsertStatus::Inserted,
+                InsertionConfirmation::Unavailable
+            ),
+            DestinationDecision::Insert
+        );
+    }
 
     fn focus(kind: FocusKind, id: Option<u64>) -> FocusedInput {
         FocusedInput {
@@ -435,22 +708,25 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_without_confirmed_text_and_failed_insertion_preserve_full_result() {
+    fn observed_failure_and_transport_failure_preserve_full_result() {
         use crate::output::InsertStatus;
         assert_eq!(
-            decide_after_output(InsertStatus::Inserted, false),
+            decide_after_output(InsertStatus::Inserted, InsertionConfirmation::NotInserted),
             DestinationDecision::Popup("output_failed")
         );
         assert_eq!(
-            decide_after_output(InsertStatus::CopiedFallback, true),
+            decide_after_output(
+                InsertStatus::CopiedFallback,
+                InsertionConfirmation::Confirmed
+            ),
             DestinationDecision::Popup("output_failed")
         );
         assert_eq!(
-            decide_after_output(InsertStatus::Failed, false),
+            decide_after_output(InsertStatus::Failed, InsertionConfirmation::Unavailable),
             DestinationDecision::Popup("output_failed")
         );
         assert_eq!(
-            decide_after_output(InsertStatus::Inserted, true),
+            decide_after_output(InsertStatus::Inserted, InsertionConfirmation::Confirmed),
             DestinationDecision::Insert
         );
     }

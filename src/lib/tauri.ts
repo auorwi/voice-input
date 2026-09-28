@@ -35,8 +35,8 @@ export async function listPendingDictationResults(): Promise<PendingDictationRes
   return invoke('list_pending_dictation_results')
 }
 
-export async function copyPendingDictationResult(sessionId: string): Promise<void> {
-  return invoke('copy_pending_dictation_result', { sessionId })
+export async function copyPendingDictationResult(sessionId: string, editedText?: string): Promise<void> {
+  return invoke('copy_pending_dictation_result', { sessionId, ...(editedText !== undefined ? { editedText } : {}) })
 }
 
 export async function dismissPendingDictationResult(sessionId: string): Promise<number> {

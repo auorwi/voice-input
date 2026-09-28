@@ -55,16 +55,20 @@ impl PendingDictationResults {
     pub fn copy_with(
         &self,
         session_id: &str,
+        edited_text: Option<&str>,
         copy: impl FnOnce(&str) -> Result<(), String>,
     ) -> Result<(), String> {
-        let text = self
-            .0
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .iter()
-            .find(|item| item.session_id == session_id)
-            .map(|item| item.text.clone())
-            .ok_or_else(|| "Result is no longer available".to_string())?;
+        let text = {
+            let mut results = self.0.lock().unwrap_or_else(|error| error.into_inner());
+            let result = results
+                .iter_mut()
+                .find(|item| item.session_id == session_id)
+                .ok_or_else(|| "Result is no longer available".to_string())?;
+            if let Some(edited) = edited_text {
+                result.text = edited.to_string();
+            }
+            result.text.clone()
+        };
         copy(&text)
     }
 }
@@ -80,8 +84,9 @@ pub fn list_pending_dictation_results(
 pub fn copy_pending_dictation_result(
     state: tauri::State<'_, PendingDictationResults>,
     session_id: String,
+    edited_text: Option<String>,
 ) -> Result<(), String> {
-    state.copy_with(&session_id, |text| {
+    state.copy_with(&session_id, edited_text.as_deref(), |text| {
         let mut clipboard = arboard::Clipboard::new().map_err(|error| error.to_string())?;
         clipboard.set_text(text).map_err(|error| error.to_string())
     })
@@ -174,13 +179,13 @@ mod tests {
         let store = PendingDictationResults::default();
         store.publish(result("one", "完整文字"));
         assert_eq!(
-            store.copy_with("one", |_| Err("clipboard unavailable".to_string())),
+            store.copy_with("one", None, |_| Err("clipboard unavailable".to_string())),
             Err("clipboard unavailable".to_string())
         );
         assert_eq!(store.list(), vec![result("one", "完整文字")]);
         let mut copied = String::new();
         assert_eq!(
-            store.copy_with("one", |text| {
+            store.copy_with("one", None, |text| {
                 copied = text.to_string();
                 Ok(())
             }),
@@ -188,6 +193,52 @@ mod tests {
         );
         assert_eq!(copied, "完整文字");
         assert_eq!(store.list().len(), 1);
+    }
+
+    #[test]
+    fn edited_copy_preserves_unicode_line_breaks_and_other_sessions() {
+        let store = PendingDictationResults::default();
+        store.publish(result("one", "识别错字"));
+        store.publish(result("two", "第二段"));
+        let edited = "修正的文字\n第二行 🎙️";
+        store
+            .copy_with("one", Some(edited), |text| {
+                assert_eq!(text, edited);
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(
+            store.list(),
+            vec![result("one", edited), result("two", "第二段")]
+        );
+    }
+
+    #[test]
+    fn edited_text_survives_clipboard_failure_and_can_be_retried() {
+        let store = PendingDictationResults::default();
+        store.publish(result("one", "原始"));
+        assert!(store
+            .copy_with("one", Some("已修改"), |_| Err("unavailable".into()))
+            .is_err());
+        assert_eq!(store.list(), vec![result("one", "已修改")]);
+        store
+            .copy_with("one", None, |text| {
+                assert_eq!(text, "已修改");
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn stale_session_cannot_copy_or_edit_another_result() {
+        let store = PendingDictationResults::default();
+        store.publish(result("new", "保留我"));
+        assert!(store
+            .copy_with("old", Some("修改"), |_| panic!(
+                "must not write clipboard"
+            ))
+            .is_err());
+        assert_eq!(store.list(), vec![result("new", "保留我")]);
     }
 
     #[test]
