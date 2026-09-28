@@ -1,10 +1,10 @@
-# Contributing to OpenTypeless
+# Contributing to Voice Input
 
 Thanks for your interest in contributing! This guide covers everything you need to get started.
 
 ## Development Setup
 
-1. Install prerequisites: Node.js 20+, Rust stable toolchain, and [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
+1. Install prerequisites: Node.js 22.12+, Rust stable toolchain, and [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
 2. Clone the repo and run `npm install`
 3. Start development: `npm run tauri dev`
 
@@ -13,8 +13,8 @@ Thanks for your interest in contributing! This guide covers everything you need 
 | Type | Process |
 |------|---------|
 | Bug fix / small improvement | Open a PR directly |
-| New feature / architecture change | Start a [Discussion](https://github.com/tover0314-w/opentypeless/discussions/categories/ideas) first |
-| Question / help | Post in [Q&A Discussions](https://github.com/tover0314-w/opentypeless/discussions/categories/q-a) |
+| New feature / architecture change | Open an [issue](https://github.com/auorwi/voice-input/issues) first |
+| Question / help | Open a [question](https://github.com/auorwi/voice-input/issues) |
 
 ## Making Changes
 
@@ -72,9 +72,9 @@ We welcome contributions made with the help of AI tools (GitHub Copilot, Claude,
 
 ## Current Priorities
 
-- Stability and reliability across all platforms
+- Stability and reliability of personal macOS dictation
 - User experience improvements
 - Additional STT and LLM provider integrations
 - Internationalization coverage
 
-See [VISION.md](VISION.md) for the project's long-term direction.
+See [README.md](README.md) for the scope of this edition. Other inherited documents describe upstream OpenTypeless.

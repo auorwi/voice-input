@@ -1,37 +1,14 @@
 # Security Policy
 
-## Reporting a Vulnerability
+This repository maintains the personal macOS edition of Voice Input. For a vulnerability in this edition, use [GitHub private vulnerability reporting](https://github.com/auorwi/voice-input/security/advisories/new). Do not disclose exploits, API keys, or private dictation content in public issues.
 
-Please report security vulnerabilities through [GitHub Security Advisories](https://github.com/tover0314-w/opentypeless/security/advisories/new).
+Include the affected commit, macOS version, impact, and minimal reproduction steps with sensitive data removed. This personal project does not promise a fixed response time.
 
-**Do not open a public issue for security vulnerabilities.**
+## Data handling
 
-Your report should include:
+- Configure your own STT and LLM providers. Their data policies and charges apply to the audio and text sent to them.
+- Provider secrets are stored in the macOS Keychain; local application data includes configuration and dictation history.
+- Accessibility permission supports global shortcuts, focused-input validation, and keyboard output. Unknown or changed destinations fall back to a copyable result window.
+- This edition uses a separate application identifier and disables upstream automatic updates and account onboarding.
 
-- A descriptive title
-- Severity assessment (Critical / High / Medium / Low)
-- Affected component(s)
-- Steps to reproduce
-- Impact description
-
-We will acknowledge your report within 72 hours and aim to release a fix within 14 days for critical issues.
-
-## Security Model
-
-OpenTypeless follows a **Bring Your Own Key (BYOK)** model:
-
-- All API keys are stored locally on the user's machine via `tauri-plugin-store`
-- No cloud account or server-side storage is required for the core product
-- Audio data is sent directly from the user's machine to the chosen STT/LLM provider
-- Cloud proxy mode requires authentication via session token
-- The application does not collect telemetry or usage data
-- CSP is enabled in the Tauri webview
-
-## Out of Scope
-
-The following are not considered vulnerabilities:
-
-- Prompt injection in LLM responses (no security boundary to bypass)
-- Users exposing their own API keys through misconfiguration
-- Issues requiring physical access to the user's machine
-- Vulnerabilities in third-party STT/LLM provider APIs
+Keep `.env` files, credentials, databases, recordings, and local application state out of commits. Report an accidental credential exposure by revoking the credential first.
