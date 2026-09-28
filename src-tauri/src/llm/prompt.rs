@@ -5,7 +5,7 @@ use crate::voice_intent::{VoiceIntent, VoiceIntentKind};
 use super::context_policy::ContextPolicy;
 use super::{AppType, CorrectionRule};
 
-pub const CONTEXT_PROMPT_VERSION: &str = "voice-input-styles-v2";
+pub const CONTEXT_PROMPT_VERSION: &str = "voice-input-styles-v3";
 
 const BASE_PROMPT: &str = r#"[SAFETY_AND_FIDELITY]
 You are a voice-to-text assistant. Transform raw speech transcription into clean, polished text that reads as if it were typed — not transcribed.
@@ -372,31 +372,25 @@ fn append_polish_style_prompt(prompt: &mut String, polish_style: &str) {
     prompt.push_str("\nFINAL FORMAT CONTRACT: Apply this selected format even when an earlier app, scene, or custom preference requests a different layout. Keep every substantive detail; do not output a summary or your reasoning. Examples illustrate format only; never copy their facts into the result. Use the transcript's language unless translation is enabled.\n");
     let addon = if polish_style.trim() == "structured" {
         r#"POLISH STYLE: Structured / 结构化
-Turn scattered speech into an organized, directly usable outline.
-- Identify independent tasks, updates, decisions, arguments, or steps, even WITHOUT words like first/second or 首先/然后.
-- For 2 or more distinct items, output a numbered list: 1. ... newline 2. ... . Each item MUST occupy its own line, never one long paragraph.
-- Keep a task's owner, deadline, reasons, limits, and dependent details in the SAME item. Split by meaning, not by every sentence or comma. Do not drop any item.
-- For 3 or more items, use short neutral topic labels within the items when helpful, e.g. "预算：...". For many items across multiple topics, group under a few plain-text headings. No overall title, tables, Markdown # headings, bold markers, or invented categories such as risks/decisions unless supported.
-- For ONE simple thought, keep a natural sentence or short paragraph; no heading or artificial list. A meeting time plus a reminder about that same meeting is one thought.
-- Retain original order unless regrouping clearly related information improves readability. Never lose chronology, causality, uncertainty, or conditions.
+Produce the complete message the speaker intends to send, with natural paragraphs and lists. This is full-text editing, not summarization or an outline. Apply the following steps in order, silently.
 
-Examples:
-Input: 嗯报名表小许今天改好然后宣传图小唐明早发给我预算最多两千元如果客户没确认就先别发布
-Output:
-1. 报名表：小许今天改好
-2. 宣传图：小唐明早发给我
-3. 预算：最多两千元
-4. 发布条件：如果客户没确认，就先别发布
+1. ESTABLISH THE INTENDED CONTENT
+Resolve explicit self-corrections first: when the speaker retracts something they just said and supplies a replacement, use the replacement alone. Delete the abandoned wording and the correction chatter. They are not part of the intended message and must not be restored by later preservation checks.
+Distinguish this from describing an error in existing material, quoting someone else, comparing alternatives, or explaining a change. Those are substantive comparisons: retain both sides and what each refers to. If a correction is ambiguous, preserve the uncertainty instead of guessing. Use only meaning supported by the transcript; do not infer unspoken intentions.
+Remove meaningless filler and accidental repetitions. Keep intentional emphasis and meaningful discourse markers. Everything else belongs in the output: statements, introductory framing, explanations, examples, reasons, reservations, alternatives, side comments, and closing requests.
 
-Input: 明天下午两点开会记得带上合同
-Output: 明天下午两点开会，记得带上合同
+2. ORGANIZE BY MEANING
+Determine which parts are background, a continuous explanation or narrative, parallel items, sequential steps, additional thoughts, or a closing request. Preserve narrative logic and use paragraph breaks at natural boundaries. Local reordering is necessary when later details belong to an earlier task: move those details into that task's item instead of preserving their original sentence positions.
+Format parallel tasks, options, requirements, and procedural steps as numbered lists, whether the speaker explicitly counts them or their parallel relationship is clear. Convert spoken ordinals to Arabic-numbered markers, one item per line. Respect the scope and count of a spoken enumeration. Do not drop any item or absorb surrounding prose into the list.
+For each parallel task, create a complete list item beginning with the assignment itself: its actor, action, object, and deadline. Attach its conditions and supporting details to that same item, including details supplied later. Do not put the assignments in an introductory paragraph and list only their details. Never transfer an owner or condition to another item. Conditions applying to the whole message remain outside the list.
+Background, arguments, stories, independent additions, and requests remain natural prose. Multiple facts or sentences alone do not require a list. A short message may stay one sentence. Use prose and lists together when the content calls for both.
 
-Input: The API timeout is 20 seconds keep two retries and the mobile button still overlaps Leo will fix it today
-Output:
-1. API: The timeout is 20 seconds; keep two retries
-2. Mobile button: It still overlaps. Leo will fix it today
+3. WRITE THE COMPLETE MESSAGE
+Use fluent, complete sentences, with as many sentences per paragraph or item as needed to preserve the intended content. Retain the speaker's point of view, uncertainty, politeness, emphasis, negation, temporary restrictions, chronology, causality, and degree of commitment. Keep questions as questions and proposals as proposals.
+Do not compress statements into keywords, summaries, topic labels, or takeaways. Do not add titles, headings, categories, tables, bold markers, conclusions, advice, or facts. Preserve meaningful headings explicitly dictated by the speaker. Any earlier preference for brevity concerns verbal clutter only; it cannot remove intended content.
 
-Before returning: if there are independent items, verify the result actually contains separate numbered lines. Output only the organized text."#
+4. VERIFY
+Check against the intended content from step 1, not the unedited transcript. Every retained meaning must survive, with correct attribution and relationships. Every clear list must be formatted as a list within its actual boundaries. Correct omissions and misplaced details without restoring retracted words. Output only the finished message."#
     } else {
         // Removed/unknown styles also fall back to Clean for older callers.
         r#"POLISH STYLE: Clean / 清爽
@@ -1163,7 +1157,7 @@ mod tests {
     }
 
     #[test]
-    fn test_prompt_structured_polish_style_adds_outline_rules() {
+    fn test_prompt_structured_polish_style_adds_adaptive_format_rules() {
         let prompt = build_system_prompt_with_scene(SystemPromptOptions {
             app_type: AppType::General,
             dictionary: &[],
@@ -1178,7 +1172,6 @@ mod tests {
         });
 
         assert!(prompt.contains("POLISH STYLE: Structured"));
-        assert!(prompt.contains("2 or more distinct items"));
         assert!(prompt.contains("numbered"));
         assert!(prompt.contains("Do not drop any item"));
     }

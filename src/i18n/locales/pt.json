@@ -382,7 +382,7 @@
     "polishStyleClean": "Limpo",
     "polishStyleStructured": "Estruturado",
     "polishStyleCleanHint": "Remove hesitações e repetições e torna as frases naturais, preservando todos os detalhes.",
-    "polishStyleStructuredHint": "Agrupa pontos independentes numa lista numerada, preservando responsáveis, datas e condições. Frases simples continuam simples.",
+    "polishStyleStructuredHint": "Preserva a mensagem completa, as explicações e os exemplos. Numera listas reais; mantém o contexto, as ideias adicionais e os pedidos em parágrafos naturais.",
     "translationMode": "Modo de Tradução",
     "translationModeDesc": "Traduz cada gravação para o idioma de destino.",
     "selectedTextContext": "Contexto do Texto Selecionado",

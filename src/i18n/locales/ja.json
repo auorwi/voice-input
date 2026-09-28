@@ -382,7 +382,7 @@
     "polishStyleClean": "クリーン",
     "polishStyleStructured": "構造化",
     "polishStyleCleanHint": "不要な言いよどみや重複を除き、情報を保ちながら自然な文と段落に整えます。",
-    "polishStyleStructuredHint": "独立した項目を番号付きで整理し、担当者・日時・条件を保持します。短い一文は無理に分割しません。",
+    "polishStyleStructuredHint": "説明や具体例を含め、内容を省略せずに整えます。実際のリストだけに番号を付け、背景・補足・依頼は自然な段落に保ちます。",
     "translationMode": "翻訳モード",
     "translationModeDesc": "すべての録音を対象言語に翻訳します。",
     "selectedTextContext": "選択テキストコンテキスト",

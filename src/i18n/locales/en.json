@@ -380,7 +380,7 @@
     "polishStyleClean": "Clean",
     "polishStyleStructured": "Structured",
     "polishStyleCleanHint": "Remove verbal clutter and smooth sentences into natural paragraphs, preserving all details.",
-    "polishStyleStructuredHint": "Group independent points into numbered items, keeping owners, dates and conditions. Simple sentences stay simple.",
+    "polishStyleStructuredHint": "Keep the full message, explanations and examples. Number actual lists; keep background, extra thoughts and requests in natural paragraphs.",
     "askAnything": "Ask Anything",
     "askAnythingDesc": "Voice question, one-shot answer. No chat history.",
     "tryAsk": "Try Ask",

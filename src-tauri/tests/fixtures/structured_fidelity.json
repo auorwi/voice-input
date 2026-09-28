@@ -1,0 +1,193 @@
+{
+  "description": "Synthetic spoken inputs for live model evaluation. Judge meaning and ownership, not just length or keyword presence. Language and translation behavior must stay unchanged.",
+  "samples": [
+    {
+      "id": "activity",
+      "scenario": "general",
+      "retracted_value_patterns": [
+        "五千",
+        "5[,，]?000",
+        "我说错了"
+      ],
+      "required_value_patterns": [
+        "十七|17",
+        "十八|18"
+      ],
+      "text": "嗯，我想说一下这次活动页面的调整。整体方向我觉得没问题，暂时不用推倒重做，因为我们主要想验证用户愿不愿意报名，不是这周就把所有功能做完。现在有两处需要改。第一，手机上的报名按钮有点挤，尤其在小屏手机上，我担心有人注意不到。小林今天先把间距调一下，颜色先不要换，改完给我看两张不同尺寸的截图。第二，海报日期写错了，不是十月十七号，应该是十月十八号，小周明天中午前更新。预算最多五千，不对，我说错了，还是三千，现阶段不要追加。如果客户周四还没确认文案，我们就先别发布，但内部测试可以继续。另外我有个想法，也不一定对，可以把报名流程里的手机号码改成选填。因为有些人可能只是想先了解活动，不愿意一上来就留电话。我们周五再讨论这个建议，现在先不要直接改。最后，能不能把这两处修改的前后对比放在一起发给我？这样我会比较容易确认。",
+      "numbered_items": 2,
+      "preserve": [
+        "开头和背景仍为段落",
+        "我觉得及不做完整功能的原因",
+        "小屏手机和担心用户看不到按钮",
+        "小林今天调间距，暂不改颜色",
+        "两张不同尺寸的截图",
+        "海报日期改为10月18日",
+        "小周明天中午前更新属于海报任务",
+        "最终预算三千且不追加",
+        "客户周四未确认则不发布，内部测试仍可继续",
+        "选填手机号只是尚未确认的建议",
+        "先了解活动、不愿留电话的原因",
+        "周五讨论且现在不改",
+        "最后保留能不能的请求语气及前后对比的准确含义"
+      ]
+    },
+    {
+      "id": "narrative",
+      "scenario": "work_chat",
+      "text": "我觉得这次访谈还不能直接证明新用户不喜欢这个功能。因为我们只聊了三个人，而且他们都用过旧版本，不能代表第一次来的人。比如小杨说按钮很难找，但他后来解释，主要是习惯了以前的位置，不是完全不知道这个功能是干什么的。我不是说反馈没用，我只是担心现在就删掉入口会判断得太快。要不下周再找五个没用过产品的人试一下？如果他们也找不到，我们再考虑改布局，在那之前先保持原样。",
+      "numbered_items": 0,
+      "preserve": [
+        "三个人且都用过旧版的样本限制",
+        "小杨的具体例子及后续解释",
+        "不是不知道功能用途",
+        "没有否定反馈价值",
+        "担心过早判断的主观立场",
+        "下周五位未用过产品的人",
+        "保留要不的提议语气",
+        "有条件地改布局且此前保持原样"
+      ]
+    },
+    {
+      "id": "implicit_list",
+      "scenario": "general",
+      "text": "报名表小许今天改好，确认邮件小唐明早发给我。报名表里的公司名称先保留选填，因为有些人是个人报名。确认邮件要附上停车地图，上次就有人说绕了两圈没找到入口。",
+      "numbered_items": 2,
+      "preserve": [
+        "小许今天负责报名表",
+        "公司名称选填及个人报名的原因附在报名表项",
+        "小唐明早负责确认邮件",
+        "停车地图及绕了两圈的例子附在邮件项"
+      ]
+    },
+    {
+      "id": "short",
+      "scenario": "general",
+      "text": "明天下午三点开会，记得带上报价单",
+      "numbered_items": 0,
+      "preserve": [
+        "同一会议的时间与提醒保持完整短句，不硬拆列表"
+      ]
+    },
+    {
+      "id": "english",
+      "scenario": "general",
+      "text": "I think the current plan is reasonable because we only need to validate sign-up interest this week. There are two changes. First, Mia should increase the mobile button spacing today, but keep its color because we have not tested an alternative. Second, Leo should correct the poster date to October 18 by noon tomorrow. I also have a tentative idea: we could make phone numbers optional, since some visitors only want to learn about the event. Let's discuss that on Friday and leave it unchanged for now. Could you send me the before-and-after screenshots together so I can compare them?",
+      "numbered_items": 2,
+      "preserve": [
+        "原语言英语不变",
+        "背景与两项修改保持各自结构",
+        "Mia和Leo的负责人及期限正确",
+        "颜色及尚未测试替代色的理由",
+        "手机号选填仍为暂定建议及其原因",
+        "周五讨论、现在不改",
+        "Could you的请求语气及截图用途"
+      ]
+    },
+    {
+      "id": "procedure",
+      "scenario": "general",
+      "text": "我把整理资料的方法说一下，一共三个步骤。第一，先把下载目录里的文件按项目放好，没看懂的文件不要删，放到待确认文件夹。第二，给每个项目建一个索引，文件名尽量沿用原名，因为其他同事还会用原来的链接。第三，把重复的副本列出来给我看，确认后再清理。做完以后能不能告诉我一共整理了多少个项目？我需要估计下次要留多少时间。",
+      "numbered_items": 3,
+      "preserve": [
+        "三个步骤的先后和各自限制",
+        "未知文件放待确认且不删除",
+        "保留原名及同事使用旧链接的原因",
+        "副本需确认后清理",
+        "结尾保留询问和估计时间的目的"
+      ]
+    },
+    {
+      "id": "technical_explanation",
+      "scenario": "work_chat",
+      "text": "我怀疑这次超时跟连接池有关，但现在还没有足够证据。日志里有connection_reset，不能只看到这个就认定是服务器故障，因为代理也可能主动断开连接。我昨天在测试环境把max_connections从16调到32，现象暂时没再出现，不过只跑了十分钟，还不能说明已经修好了。能不能先补一段长时间的压测？先不要改生产配置，我想等结果出来再决定。",
+      "numbered_items": 0,
+      "required_value_patterns": [
+        "connection_reset",
+        "max_connections",
+        "16",
+        "32"
+      ],
+      "preserve": [
+        "怀疑但证据不足",
+        "代理断开连接的另一种解释",
+        "测试环境参数变化前后值",
+        "只跑十分钟而非证明修复",
+        "保留压测请求与不改生产的限制"
+      ]
+    },
+    {
+      "id": "daily_message",
+      "scenario": "general",
+      "text": "我今天可能会晚一点到，不是忘记约会了，是地铁临时停运，我现在在等公交。你要是已经到了，可以先找个靠窗的位置，不过别点含花生的那份甜点，我不太喜欢那个味道。等我上车以后再发预计时间给你，好吗？",
+      "numbered_items": 0,
+      "preserve": [
+        "可能晚到及不是忘记约会",
+        "地铁停运、正在等公交",
+        "已到才先找位置的条件",
+        "不点花生甜点及口味原因",
+        "上车后才发时间",
+        "保留好吗的语气"
+      ]
+    },
+    {
+      "id": "options",
+      "scenario": "general",
+      "text": "我现在想到两个安排，你帮我看看。一个是周六上午去图书馆，比较安静，但小丁只能十点以后到，得问问大家能不能等。另一个是周日下午线上聊，不用赶路，不过小赵家里可能有点吵。两个方案我都能接受，先收集一下大家的意见，不用今天就决定。",
+      "numbered_items": 2,
+      "preserve": [
+        "两个选项均非已经决定",
+        "图书馆安静及小丁到达限制",
+        "询问是否愿意等",
+        "线上不用赶路及小赵可能吵",
+        "都能接受且先收集意见",
+        "不需要当天决定"
+      ]
+    },
+    {
+      "id": "correction_scope",
+      "scenario": "general",
+      "text": "记录里写成了南仓，这个地方写错了，应该是北仓，请保留修改前后的记录，方便交接。负责人是小任，不对，我刚刚口误，是小冉。她说可能周二到，不是保证周二一定到，得先看车次有没有变化。能不能先确认一下仓库地址再安排车？",
+      "numbered_items": 0,
+      "required_value_patterns": [
+        "南仓",
+        "北仓",
+        "小冉"
+      ],
+      "retracted_value_patterns": [
+        "小任",
+        "口误"
+      ],
+      "preserve": [
+        "记录原错误值和正确值均保留",
+        "修改前后记录及交接目的",
+        "自身口误负责人只保留小冉",
+        "可能周二但不保证及车次条件",
+        "先确认地址再安排车仍为请求"
+      ]
+    },
+    {
+      "id": "mixed_language",
+      "scenario": "general",
+      "text": "关于这个release，我有两点想确认。第一，QA说iOS已经通过，但Android还没跑完，所以先别发全量，尤其不要把beta当作正式版。第二，README里的callback_url拼错了，Leo今天改完请把diff给我，我想看看是不是只改了文档。除此之外我暂时没有别的意见，能不能等QA补完结果我们再一起确认？",
+      "numbered_items": 2,
+      "required_value_patterns": [
+        "QA",
+        "iOS",
+        "Android",
+        "beta",
+        "README",
+        "callback_url",
+        "Leo",
+        "diff"
+      ],
+      "preserve": [
+        "iOS通过但Android未完成",
+        "不全量且不把beta当正式",
+        "文档字段拼写与Leo期限",
+        "diff用途是确认只改文档",
+        "暂时没有其他意见",
+        "等待QA后再共同确认的请求"
+      ]
+    }
+  ]
+}

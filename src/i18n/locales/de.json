@@ -382,7 +382,7 @@
     "polishStyleClean": "Klar",
     "polishStyleStructured": "Strukturiert",
     "polishStyleCleanHint": "Füllwörter und Wiederholungen entfernen, Sätze glätten und alle Details in natürlichen Absätzen erhalten.",
-    "polishStyleStructuredHint": "Unabhängige Punkte nummerieren; Zuständigkeiten, Termine und Bedingungen erhalten. Einfache Sätze bleiben einfach.",
+    "polishStyleStructuredHint": "Erhält die vollständige Aussage, Erklärungen und Beispiele. Nummeriert echte Listen; Hintergrund, Ergänzungen und Bitten bleiben natürliche Absätze.",
     "translationMode": "Übersetzungsmodus",
     "translationModeDesc": "Jede Aufnahme in die Zielsprache übersetzen.",
     "selectedTextContext": "Kontext des markierten Textes",

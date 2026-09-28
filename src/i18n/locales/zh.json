@@ -380,7 +380,7 @@
     "polishStyleClean": "清爽",
     "polishStyleStructured": "结构化",
     "polishStyleCleanHint": "去掉口头词和重复，理顺语句，用自然短句和段落表达，保留全部有效信息。",
-    "polishStyleStructuredHint": "把独立事项分组、编号，保留人物、时间和条件；一句简单的话不强行拆分。",
+    "polishStyleStructuredHint": "保留完整表达、解释和例子，自然分段；真正的列表才编号，背景、补充想法和请求保持段落。",
     "askAnything": "Ask Anything",
     "askAnythingDesc": "语音提问，一次回答。不带聊天历史。",
     "tryAsk": "试用 Ask",
