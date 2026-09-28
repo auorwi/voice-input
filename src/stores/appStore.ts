@@ -735,7 +735,7 @@ const defaultConfig: AppConfig = {
   llm_model: 'google/gemini-2.5-flash',
   llm_base_url: 'https://openrouter.ai/api/v1',
   polish_enabled: true,
-  context_adaptation_enabled: true,
+  context_adaptation_enabled: false,
   voice_routing_flags: {
     draft_insert: true,
     rewrite_selection: true,
@@ -786,7 +786,7 @@ const defaultConfig: AppConfig = {
   history_enabled: true,
   history_retention_days: 0,
   history_max_entries: 5000,
-  ui_language: 'en',
+  ui_language: 'zh',
   capsule_auto_hide: true,
 }
 

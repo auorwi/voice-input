@@ -341,6 +341,9 @@ fn streaming_insert_strategy_for_config(
     accessibility_trusted: bool,
     keyboard_available: bool,
 ) -> Option<output::InsertionStrategy> {
+    if cfg!(target_os = "macos") {
+        return None;
+    }
     if !config.streaming_insert_enabled || has_selected_text || !accessibility_trusted {
         return None;
     }
@@ -822,11 +825,23 @@ struct PipelineVoiceExecutionBackend<'a> {
     config: &'a storage::AppConfig,
     already_copied: bool,
     popup_fallback_enabled: bool,
+    initial_focus: Option<output::focused_input::FocusedInput>,
+}
+
+fn ordinary_output_focus(
+    kind: crate::voice_intent::VoiceIntentKind,
+    focus: output::focused_input::FocusedInput,
+) -> Option<output::focused_input::FocusedInput> {
+    (cfg!(target_os = "macos") && kind == crate::voice_intent::VoiceIntentKind::DictateInsert)
+        .then_some(focus)
 }
 
 #[async_trait::async_trait]
 impl crate::voice_intent::executor::VoiceExecutionBackend for PipelineVoiceExecutionBackend<'_> {
     fn target_matches(&mut self, guard: &TargetAppGuard) -> bool {
+        if self.initial_focus.is_some() {
+            return true;
+        }
         self.pipeline
             .context_detector
             .target_still_matches_now(guard)
@@ -849,7 +864,13 @@ impl crate::voice_intent::executor::VoiceExecutionBackend for PipelineVoiceExecu
     async fn insert_at_cursor(&mut self, text: &str) -> std::result::Result<(), String> {
         let result = self
             .pipeline
-            .output_text(text, self.app_name, self.target_guard, self.config)
+            .output_text(
+                text,
+                self.app_name,
+                self.target_guard,
+                self.config,
+                self.initial_focus,
+            )
             .await
             .map_err(|error| error.to_string())?;
         if result.status == output::InsertStatus::Inserted {
@@ -893,6 +914,7 @@ impl crate::voice_intent::executor::VoiceExecutionBackend for PipelineVoiceExecu
                 self.app_name,
                 &TargetAppGuard::default(),
                 &copy_config,
+                None,
             )
             .await
             .map_err(|error| error.to_string())?;
@@ -1162,13 +1184,18 @@ impl PipelineHandle {
             .preloaded_config
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = Some(config_data.clone());
+        let mut app_ctx = self
+            .context_detector
+            .snapshot_for_recording_enabled(config_data.context_adaptation_enabled);
+        #[cfg(target_os = "macos")]
+        {
+            app_ctx.focused_input =
+                output::focused_input::capture_focused_input(app_ctx.target_guard.process_id);
+        }
         *self
             .preloaded_app_ctx
             .lock()
-            .unwrap_or_else(|e| e.into_inner()) = Some(
-            self.context_detector
-                .snapshot_for_recording_enabled(config_data.context_adaptation_enabled),
-        );
+            .unwrap_or_else(|e| e.into_inner()) = Some(app_ctx);
         let dictionary_store = self.app_handle.state::<storage::DictionaryStore>();
         let dict_words = dictionary_store.words().await;
         let correction_rules = dictionary_store
@@ -2191,6 +2218,7 @@ impl PipelineHandle {
                     &app_ctx.profile.app_label,
                     &app_ctx.target_guard,
                     config,
+                    Some(app_ctx.focused_input),
                 )
                 .await;
             if let Err(error) = &output_result {
@@ -2488,6 +2516,7 @@ impl PipelineHandle {
                     config,
                     already_copied: false,
                     popup_fallback_enabled,
+                    initial_focus: ordinary_output_focus(voice_intent.kind, app_ctx.focused_input),
                 };
                 let execution = crate::voice_intent::executor::execute_voice_intent(
                     crate::voice_intent::executor::VoiceExecutionRequest {
@@ -2592,6 +2621,7 @@ impl PipelineHandle {
                         &app_ctx.profile.app_label,
                         &app_ctx.target_guard,
                         config,
+                        Some(app_ctx.focused_input),
                     )
                     .await;
                 if let Err(output_error) = &output_result {
@@ -2599,6 +2629,19 @@ impl PipelineHandle {
                     let _ = self
                         .app_handle
                         .emit("pipeline:error", output_user_error(output_error));
+                }
+                #[cfg(target_os = "macos")]
+                if output_result
+                    .as_ref()
+                    .is_ok_and(|result| result.status == output::InsertStatus::Inserted)
+                {
+                    if let Err(error) = crate::commands::dictation_result::publish_result(
+                        &self.app_handle,
+                        provider_text,
+                        "llm_raw_fallback",
+                    ) {
+                        tracing::error!("Failed to show raw transcript after LLM error: {error}");
+                    }
                 }
                 let output_metadata = history_output_metadata_with_prior_error(
                     output_result.as_ref(),
@@ -2841,11 +2884,39 @@ impl PipelineHandle {
         app_name: &str,
         target_guard: &TargetAppGuard,
         config: &storage::AppConfig,
+        initial_focus: Option<output::focused_input::FocusedInput>,
     ) -> Result<output::InsertResult> {
         self.set_state(PipelineState::Outputting);
 
         let configured_strategy =
             output::InsertionStrategy::from_config_value(&config.insertion_strategy);
+        #[cfg(target_os = "macos")]
+        let insertion_probe = if !strategy_uses_automated_input(configured_strategy) {
+            None
+        } else if let Some(start) = initial_focus {
+            let current = output::focused_input::capture_focused_input(target_guard.process_id);
+            let same_app = self.context_detector.target_still_matches_now(target_guard);
+            match output::focused_input::decide_destination(start, current, same_app) {
+                output::focused_input::DestinationDecision::Popup(reason) => {
+                    return Ok(self.show_pending_output(text, reason, configured_strategy));
+                }
+                output::focused_input::DestinationDecision::Insert => {}
+            }
+            match output::focused_input::begin_insertion_probe(current) {
+                Some(probe) => Some(probe),
+                None => {
+                    return Ok(self.show_pending_output(
+                        text,
+                        "unknown_target",
+                        configured_strategy,
+                    ))
+                }
+            }
+        } else {
+            None
+        };
+        #[cfg(not(target_os = "macos"))]
+        let _ = initial_focus;
         let target_warning = (strategy_uses_automated_input(configured_strategy)
             && !self.context_detector.target_still_matches_now(target_guard))
         .then(|| crate::error::UserError {
@@ -2912,8 +2983,47 @@ impl PipelineHandle {
         .await
         {
             Ok(outcome) => outcome,
-            Err(e) => anyhow::bail!("{}", e),
+            Err(e) => {
+                #[cfg(target_os = "macos")]
+                if initial_focus.is_some() {
+                    tracing::error!("Automatic output failed: {e}");
+                    return Ok(self.show_pending_output(
+                        text,
+                        "output_failed",
+                        configured_strategy,
+                    ));
+                }
+                anyhow::bail!("{}", e)
+            }
         };
+
+        #[cfg(target_os = "macos")]
+        if initial_focus.is_some()
+            && configured_strategy == output::InsertionStrategy::ClipboardCopyOnly
+        {
+            return Ok(self.show_pending_output(text, "copy_only", configured_strategy));
+        }
+        #[cfg(target_os = "macos")]
+        if let Some(probe) = insertion_probe {
+            let mut confirmed = false;
+            if output_outcome.insert_result.status == output::InsertStatus::Inserted {
+                for _ in 0..3 {
+                    if output::focused_input::confirm_inserted_text(probe, text) {
+                        confirmed = true;
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+                }
+            }
+            if let output::focused_input::DestinationDecision::Popup(reason) =
+                output::focused_input::decide_after_output(
+                    output_outcome.insert_result.status,
+                    confirmed,
+                )
+            {
+                return Ok(self.show_pending_output(text, reason, configured_strategy));
+            }
+        }
 
         if let Some(user_error) = target_warning.or(accessibility_warning) {
             output_outcome.insert_result = output_outcome.insert_result.with_warning(&user_error);
@@ -2938,6 +3048,28 @@ impl PipelineHandle {
 
         let _ = self.app_handle.emit("pipeline:target_app", app_name);
         Ok(insert_result)
+    }
+
+    fn show_pending_output(
+        &self,
+        text: &str,
+        reason: &str,
+        strategy: output::InsertionStrategy,
+    ) -> output::InsertResult {
+        if let Err(error) =
+            crate::commands::dictation_result::publish_result(&self.app_handle, text, reason)
+        {
+            tracing::error!("Failed to show retained dictation result: {error}");
+        }
+        let warning = crate::error::UserError {
+            code: reason.to_string(),
+            details: Some("Full dictation text is available in the result window.".to_string()),
+            retry_count: 0,
+        };
+        let result = output::InsertResult::failed(strategy).with_warning(&warning);
+        let _ = self.app_handle.emit("pipeline:insert_result", &result);
+        let _ = self.app_handle.emit("pipeline:warning", &warning);
+        result
     }
 
     async fn pre_warm_endpoint(&self, endpoint: &str, managed_cloud: bool) {
@@ -3038,6 +3170,48 @@ impl PipelineHandle {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, AtomicU64};
+
+    #[test]
+    fn polished_dictation_uses_recording_element_gate_for_missing_or_changed_target() {
+        use crate::output::focused_input::{
+            decide_destination, DestinationDecision, FocusKind, FocusedInput,
+        };
+        use crate::voice_intent::VoiceIntentKind;
+        let editable = FocusedInput {
+            kind: FocusKind::Editable,
+            process_id: Some(42),
+            element_id: Some(7),
+        };
+        let no_input = FocusedInput {
+            kind: FocusKind::NotEditable,
+            process_id: Some(42),
+            element_id: None,
+        };
+        let changed = FocusedInput {
+            kind: FocusKind::Editable,
+            process_id: Some(42),
+            element_id: Some(8),
+        };
+
+        let dictation = ordinary_output_focus(VoiceIntentKind::DictateInsert, editable)
+            .expect("polished dictation must retain the starting field");
+        assert_eq!(
+            decide_destination(dictation, changed, true),
+            DestinationDecision::Popup("target_changed")
+        );
+        assert_eq!(
+            decide_destination(
+                ordinary_output_focus(VoiceIntentKind::DictateInsert, no_input).unwrap(),
+                no_input,
+                true
+            ),
+            DestinationDecision::Popup("no_target")
+        );
+        assert_eq!(
+            ordinary_output_focus(VoiceIntentKind::DraftInsert, editable),
+            None
+        );
+    }
 
     #[test]
     fn preparing_state_serializes_for_frontend() {
@@ -3310,7 +3484,7 @@ mod tests {
     }
 
     #[test]
-    fn streaming_insert_strategy_uses_keyboard_for_auto_when_safe() {
+    fn imported_streaming_setting_never_inserts_chunks_on_macos() {
         let mut config = storage::AppConfig {
             streaming_insert_enabled: true,
             ..storage::AppConfig::default()
@@ -3319,7 +3493,11 @@ mod tests {
 
         assert_eq!(
             streaming_insert_strategy_for_config(&config, false, true, true),
-            Some(output::InsertionStrategy::Keyboard)
+            if cfg!(target_os = "macos") {
+                None
+            } else {
+                Some(output::InsertionStrategy::Keyboard)
+            }
         );
     }
 
@@ -3369,7 +3547,11 @@ mod tests {
 
         assert_eq!(
             streaming_insert_strategy_for_config(&config, false, true, false),
-            Some(output::InsertionStrategy::WindowsSendInput)
+            if cfg!(target_os = "macos") {
+                None
+            } else {
+                Some(output::InsertionStrategy::WindowsSendInput)
+            }
         );
     }
 

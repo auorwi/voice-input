@@ -4,12 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Onboarding } from '../index'
 
 const mockStore = {
-  onboardingStep: 5,
+  onboardingStep: 0,
   setOnboardingStep: vi.fn(),
   setOnboardingCompleted: vi.fn(),
   sttTestStatus: 'idle',
   llmTestStatus: 'idle',
-  onboardingMode: 'cloud',
+  onboardingMode: 'byok',
   setOnboardingMode: vi.fn(),
   updateConfig: vi.fn(),
   config: {},
@@ -27,8 +27,9 @@ vi.mock('react-i18next', () => ({
 }))
 
 vi.mock('../OnboardingLayout', () => ({
-  OnboardingLayout: ({ children, onBack }: { children: React.ReactNode; onBack: () => void }) => (
+  OnboardingLayout: ({ children, onBack, onNext }: { children: React.ReactNode; onBack: () => void; onNext: () => void }) => (
     <div>
+      <button type="button" onClick={onNext}>Next</button>
       <button type="button" onClick={onBack}>
         Back
       </button>
@@ -61,28 +62,29 @@ vi.mock('../../../lib/tauri', () => ({
 }))
 
 beforeEach(() => {
-  mockStore.onboardingStep = 5
-  mockStore.onboardingMode = 'cloud'
+  mockStore.onboardingStep = 0
+  mockStore.onboardingMode = 'byok'
   mockStore.setOnboardingStep.mockReset()
 })
 
 afterEach(() => cleanup())
 
-describe('Onboarding cloud navigation', () => {
-  it('returns from Permissions to Mode Select because cloud skips provider setup', async () => {
+describe('Personal BYOK onboarding', () => {
+  it('moves directly from welcome to provider setup without account sign-in', async () => {
     render(<Onboarding />)
-
-    fireEvent.click(screen.getByRole('button', { name: 'Back' }))
-
-    await waitFor(() => expect(mockStore.setOnboardingStep).toHaveBeenCalledWith(2))
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await waitFor(() => expect(mockStore.setOnboardingStep).toHaveBeenCalledWith(1))
+    cleanup()
+    mockStore.onboardingStep = 1
+    render(<Onboarding />)
+    expect(screen.getByText('STT')).toBeInTheDocument()
+    expect(screen.queryByText('Account')).not.toBeInTheDocument()
   })
 
-  it('returns from Quick Test to Permissions', async () => {
-    mockStore.onboardingStep = 6
+  it('returns from LLM setup to STT setup', async () => {
+    mockStore.onboardingStep = 2
     render(<Onboarding />)
-
     fireEvent.click(screen.getByRole('button', { name: 'Back' }))
-
-    await waitFor(() => expect(mockStore.setOnboardingStep).toHaveBeenCalledWith(5))
+    await waitFor(() => expect(mockStore.setOnboardingStep).toHaveBeenCalledWith(1))
   })
 })

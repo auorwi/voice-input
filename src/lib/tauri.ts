@@ -25,6 +25,24 @@ export async function abortRecording(): Promise<void> {
   return invoke('abort_recording')
 }
 
+export interface PendingDictationResult {
+  sessionId: string
+  text: string
+  reason: string
+}
+
+export async function listPendingDictationResults(): Promise<PendingDictationResult[]> {
+  return invoke('list_pending_dictation_results')
+}
+
+export async function copyPendingDictationResult(sessionId: string): Promise<void> {
+  return invoke('copy_pending_dictation_result', { sessionId })
+}
+
+export async function dismissPendingDictationResult(sessionId: string): Promise<number> {
+  return invoke('dismiss_pending_dictation_result', { sessionId })
+}
+
 export async function setActiveTranslationTarget(code: string): Promise<TranslationConfig> {
   return invoke('set_active_translation_target', { code })
 }

@@ -509,7 +509,8 @@ mod tests {
 
     #[test]
     fn config_patch_includes_ui_language_change() {
-        let previous = storage::AppConfig::default();
+        let mut previous = storage::AppConfig::default();
+        previous.ui_language = "en".to_string();
         let mut next = previous.clone();
         next.ui_language = "zh".to_string();
 

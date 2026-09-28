@@ -92,6 +92,18 @@ impl NativeHeldState {
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn escape_event(keycode: i64, pressed: bool, held: &NativeHeldState) -> Option<NativeHotkeyEvent> {
+    if keycode != 53 {
+        return None;
+    }
+    held.edge(pressed).map(|state| NativeHotkeyEvent {
+        role: crate::hotkey::HotkeyRole::Cancel,
+        index: 0,
+        state,
+    })
+}
+
 #[derive(Clone, Default)]
 pub struct NativeHotkeyRuntime {
     inner: Arc<Mutex<NativeHotkeyRuntimeInner>>,
@@ -460,6 +472,7 @@ mod platform {
         handler: NativeHotkeyHandler,
         handles: Arc<MacShutdownHandles>,
         state: Mutex<NativeComboState>,
+        escape: super::NativeHeldState,
     }
 
     fn run_event_tap_loop(
@@ -473,6 +486,7 @@ mod platform {
             handler,
             handles: Arc::clone(&handles),
             state: Mutex::new(NativeComboState::default()),
+            escape: super::NativeHeldState::default(),
         }));
         let mask: CgEventMask = (1u64 << FLAGS_CHANGED) | (1u64 << KEY_DOWN) | (1u64 << KEY_UP);
 
@@ -608,6 +622,10 @@ mod platform {
 
     fn handle_key_event(context: &CallbackContext, event: CgEventRef, pressed: bool) {
         let keycode = unsafe { CGEventGetIntegerValueField(event, KEYBOARD_EVENT_KEYCODE) };
+        if let Some(cancel) = super::escape_event(keycode, pressed, &context.escape) {
+            (context.handler.as_ref())(cancel);
+            return;
+        }
         if keycode != SPACE_KEYCODE {
             return;
         }
@@ -981,6 +999,25 @@ mod tests {
         assert_eq!(state.edge(false), Some(ShortcutState::Released));
         assert_eq!(state.edge(false), None);
         assert_eq!(state.edge(true), Some(ShortcutState::Pressed));
+    }
+
+    #[test]
+    fn escape_dispatches_one_cancel_per_distinct_press() {
+        let held = NativeHeldState::default();
+        assert_eq!(
+            escape_event(53, true, &held).map(|event| event.role),
+            Some(crate::hotkey::HotkeyRole::Cancel)
+        );
+        assert_eq!(escape_event(53, true, &held), None);
+        assert_eq!(
+            escape_event(53, false, &held).map(|event| event.state),
+            Some(ShortcutState::Released)
+        );
+        assert_eq!(
+            escape_event(53, true, &held).map(|event| event.role),
+            Some(crate::hotkey::HotkeyRole::Cancel)
+        );
+        assert_eq!(escape_event(49, true, &held), None);
     }
 
     #[test]

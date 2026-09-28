@@ -3,6 +3,7 @@ pub mod ask;
 pub mod backup;
 pub mod config;
 pub mod credentials;
+pub mod dictation_result;
 pub mod dictionary;
 pub mod history;
 pub mod llm;

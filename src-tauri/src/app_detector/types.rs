@@ -150,6 +150,7 @@ impl From<&ContextSignals> for TargetAppGuard {
 pub struct RecordingContext {
     pub profile: ContextProfile,
     pub target_guard: TargetAppGuard,
+    pub focused_input: crate::output::focused_input::FocusedInput,
     pub mapped_scene_id: Option<String>,
     pub browser_access_status: BrowserAccessStatus,
     pub browser_target: Option<BrowserTarget>,

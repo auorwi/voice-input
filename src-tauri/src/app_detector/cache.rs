@@ -216,6 +216,7 @@ impl ContextDetectorHandle {
         RecordingContext {
             profile,
             target_guard,
+            focused_input: crate::output::focused_input::FocusedInput::default(),
             mapped_scene_id,
             browser_access_status,
             browser_target,

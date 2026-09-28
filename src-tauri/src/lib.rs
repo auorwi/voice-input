@@ -217,7 +217,7 @@ fn build_ask_window(handle: &tauri::AppHandle) -> tauri::Result<tauri::WebviewWi
         "ask",
         tauri::WebviewUrl::App("index.html#ask".into()),
     )
-    .title("OpenTypeless Ask")
+    .title("Voice Input Ask")
     .inner_size(400.0, 220.0)
     .min_inner_size(360.0, 180.0)
     .resizable(false)
@@ -888,19 +888,14 @@ pub fn run() {
             None,
         ))
         .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             if let Some(action) = parse_cli_action(&args) {
                 dispatch_cli_action(app, action);
                 return;
             }
-            // Deep-link URL forwarding is handled automatically by the
-            // "deep-link" feature of single-instance plugin.
-            // Just focus the main window so the user sees the result.
             restore_main_window(app);
         }))
-        .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
             // Open devtools only when the "devtools" feature is explicitly enabled
             #[cfg(feature = "devtools")]
@@ -921,7 +916,7 @@ pub fn run() {
             // Initialize data directory and database
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
-            let db_path = data_dir.join("opentypeless.db");
+            let db_path = data_dir.join("voice-input.db");
 
             // Initialize stores
             let config_manager = storage::ConfigManager::new(app_handle.clone());
@@ -958,6 +953,7 @@ pub fn run() {
             app.manage(context_detector);
             app.manage(pipeline_handle);
             app.manage(commands::ask::AskDictationState::default());
+            app.manage(commands::dictation_result::PendingDictationResults::default());
             app.manage(HotkeyModeCache(Arc::new(Mutex::new(
                 initial_config.hotkey_mode.clone(),
             ))));
@@ -969,6 +965,7 @@ pub fn run() {
                     .unwrap_or_default(),
             ))));
             app.manage(native_hotkey::NativeHotkeyRuntime::default());
+            app.manage(hotkey::HotkeyPressState::default());
             let hotkey_registration_error = Arc::new(Mutex::new(None));
             app.manage(HotkeyRegistrationError(hotkey_registration_error.clone()));
             let hotkey_supervisor = hotkey::HotkeySupervisor::default();
@@ -1006,7 +1003,7 @@ pub fn run() {
                         .clone(),
                 )
                 .menu(&tray_menu)
-                .tooltip("OpenTypeless")
+                .tooltip("Voice Input")
                 .on_menu_event(move |app, event| match event.id.as_ref() {
                     "quit" => {
                         app.exit(0);
@@ -1193,7 +1190,7 @@ pub fn run() {
                 }
             }
 
-            tracing::info!("OpenTypeless started");
+            tracing::info!("Voice Input started");
 
             // P1-2: Pre-warm HTTP connection pool in background
             let warm_handle = app_handle.clone();
@@ -1220,6 +1217,9 @@ pub fn run() {
             commands::ask::stop_ask_flow,
             commands::ask::abort_ask_dictation,
             commands::ask::take_pending_ask_message,
+            commands::dictation_result::list_pending_dictation_results,
+            commands::dictation_result::copy_pending_dictation_result,
+            commands::dictation_result::dismiss_pending_dictation_result,
             commands::translation::set_active_translation_target,
             commands::app_mappings::get_latest_mapping_candidate,
             commands::app_mappings::list_custom_app_mappings,

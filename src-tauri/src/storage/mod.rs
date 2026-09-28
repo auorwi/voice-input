@@ -400,7 +400,7 @@ impl Default for AppConfig {
             llm_model: "google/gemini-2.5-flash".to_string(),
             llm_base_url: "https://openrouter.ai/api/v1".to_string(),
             polish_enabled: true,
-            context_adaptation_enabled: true,
+            context_adaptation_enabled: false,
             voice_routing_flags: crate::voice_intent::VoiceRoutingFlags::default(),
             polish_style: "clean".to_string(),
             polish_custom_prompt: String::new(),
@@ -434,7 +434,7 @@ impl Default for AppConfig {
             history_enabled: true,
             history_retention_days: 0,
             history_max_entries: DEFAULT_HISTORY_MAX_ENTRIES,
-            ui_language: "en".to_string(),
+            ui_language: "zh".to_string(),
             capsule_auto_hide: false,
         }
     }

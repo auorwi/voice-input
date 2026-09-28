@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::storage::AppConfig;
 
-const SERVICE_NAME: &str = "OpenTypeless";
+const SERVICE_NAME: &str = "VoiceInputPersonal";
 const API_KEY_ACCOUNT_SUFFIX: &str = "api_key";
 const STORED_CREDENTIAL_VERSION: u8 = 1;
 const CLOUD_SESSION_NAMESPACE: &str = "session";

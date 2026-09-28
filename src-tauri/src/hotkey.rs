@@ -6,6 +6,7 @@ use crate::AskHotkeyCache;
 use crate::HotkeyModeCache;
 use crate::HotkeyRoleCache;
 use crate::SessionTokenStore;
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::Emitter;
@@ -240,6 +241,7 @@ impl HotkeyPairError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HotkeyRole {
     Dictation,
+    Cancel,
     Ask,
     TranslateSelection,
     EditSelection,
@@ -251,6 +253,7 @@ impl HotkeyRole {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Dictation => "dictation",
+            Self::Cancel => "cancel",
             Self::Ask => "ask",
             Self::TranslateSelection => "translate",
             Self::EditSelection => "editSelection",
@@ -723,6 +726,25 @@ enum RecordingShortcutAction {
     Ignore,
 }
 
+#[derive(Default)]
+struct HotkeyPressTracker(HashSet<HotkeyRole>);
+
+impl HotkeyPressTracker {
+    fn accept(&mut self, role: HotkeyRole, state: ShortcutState) -> Option<ShortcutState> {
+        match state {
+            ShortcutState::Pressed if self.0.insert(role) => Some(state),
+            ShortcutState::Pressed => None,
+            ShortcutState::Released => {
+                self.0.remove(&role);
+                Some(state)
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct HotkeyPressState(Mutex<HotkeyPressTracker>);
+
 fn ask_shortcut_action(
     event_state: ShortcutState,
     is_recording: bool,
@@ -761,7 +783,10 @@ fn recording_shortcut_action(
         (true, ShortcutState::Pressed, pipeline::PipelineState::Idle) => {
             RecordingShortcutAction::Start { options }
         }
-        (true, ShortcutState::Pressed, _) => RecordingShortcutAction::Stop,
+        (true, ShortcutState::Pressed, pipeline::PipelineState::Recording) => {
+            RecordingShortcutAction::Stop
+        }
+        (true, ShortcutState::Pressed, _) => RecordingShortcutAction::Ignore,
         (false, ShortcutState::Pressed, pipeline::PipelineState::Idle) => {
             RecordingShortcutAction::Start { options }
         }
@@ -900,7 +925,30 @@ pub fn handle_hotkey_role_event(
     role: HotkeyRole,
     event_state: ShortcutState,
 ) {
+    let event_state = match handle
+        .state::<HotkeyPressState>()
+        .0
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .accept(role, event_state)
+    {
+        Some(state) => state,
+        None => return,
+    };
     match role {
+        HotkeyRole::Cancel => {
+            if event_state == ShortcutState::Pressed {
+                let ask_state = handle.state::<commands::ask::AskDictationState>();
+                if ask_state.is_busy() {
+                    let _ = commands::ask::abort_ask_dictation(handle.clone(), ask_state);
+                } else {
+                    let pipeline = handle.state::<pipeline::PipelineHandle>();
+                    if pipeline.current_state() != pipeline::PipelineState::Idle {
+                        pipeline.abort();
+                    }
+                }
+            }
+        }
         HotkeyRole::Ask => {
             let ask_state = handle.state::<commands::ask::AskDictationState>();
             let action = ask_shortcut_action(
@@ -1562,6 +1610,49 @@ mod tests {
                 pipeline::PipelineStartOptions::default(),
             ),
             RecordingShortcutAction::Stop
+        );
+    }
+
+    #[test]
+    fn toggle_requires_release_between_two_keydowns() {
+        let mut presses = HotkeyPressTracker::default();
+        assert_eq!(
+            presses.accept(HotkeyRole::Dictation, ShortcutState::Pressed),
+            Some(ShortcutState::Pressed)
+        );
+        assert_eq!(
+            presses.accept(HotkeyRole::Dictation, ShortcutState::Pressed),
+            None
+        );
+        assert_eq!(
+            presses.accept(HotkeyRole::Dictation, ShortcutState::Released),
+            Some(ShortcutState::Released)
+        );
+        assert_eq!(
+            presses.accept(HotkeyRole::Dictation, ShortcutState::Pressed),
+            Some(ShortcutState::Pressed)
+        );
+    }
+
+    #[test]
+    fn busy_toggle_press_does_not_request_stop() {
+        assert_eq!(
+            recording_shortcut_action(
+                "toggle",
+                ShortcutState::Pressed,
+                pipeline::PipelineState::Polishing,
+                pipeline::PipelineStartOptions::default()
+            ),
+            RecordingShortcutAction::Ignore
+        );
+        assert_eq!(
+            recording_shortcut_action(
+                "toggle",
+                ShortcutState::Pressed,
+                pipeline::PipelineState::Preparing,
+                pipeline::PipelineStartOptions::default()
+            ),
+            RecordingShortcutAction::Ignore
         );
     }
 
