@@ -1,4 +1,6 @@
 pub mod clipboard;
+#[cfg(any(target_os = "macos", test))]
+mod focus_resolver;
 pub mod focused_input;
 pub mod keyboard;
 pub mod windows_modifier_guard;

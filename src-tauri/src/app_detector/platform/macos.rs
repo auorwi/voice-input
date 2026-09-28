@@ -31,6 +31,51 @@ pub(crate) fn restore_target_application(target: &TargetAppGuard) -> bool {
 }
 
 impl ContextSignalSource for MacOsContextSource {
+    fn capture_target(&self) -> Option<TargetAppGuard> {
+        use objc2::{
+            msg_send,
+            rc::autoreleasepool,
+            runtime::{AnyClass, AnyObject},
+        };
+        use std::ffi::CStr;
+
+        // NSWorkspace does not need Automation permission or query browser tabs.
+        autoreleasepool(|_| unsafe {
+            let class = AnyClass::get("NSWorkspace")?;
+            let workspace: *mut AnyObject = msg_send![class, sharedWorkspace];
+            if workspace.is_null() {
+                return None;
+            }
+            let app: *mut AnyObject = msg_send![workspace, frontmostApplication];
+            if app.is_null() {
+                return None;
+            }
+            let pid: i32 = msg_send![app, processIdentifier];
+            if pid <= 0 {
+                return None;
+            }
+            let bundle: *mut AnyObject = msg_send![app, bundleIdentifier];
+            let native_identity = if bundle.is_null() {
+                None
+            } else {
+                let value: *const std::os::raw::c_char = msg_send![bundle, UTF8String];
+                if value.is_null() {
+                    None
+                } else {
+                    CStr::from_ptr(value)
+                        .to_str()
+                        .ok()
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_owned)
+                }
+            };
+            Some(TargetAppGuard {
+                process_id: Some(pid as u32),
+                native_identity,
+            })
+        })
+    }
+
     fn collect(&self) -> Option<ContextSignals> {
         let output = Command::new("/usr/bin/osascript")
             .args(["-e", FRONT_APP_SCRIPT])

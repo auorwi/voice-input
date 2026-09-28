@@ -13,6 +13,12 @@ mod windows;
 
 pub(crate) trait ContextSignalSource: Send + Sync + 'static {
     fn collect(&self) -> Option<ContextSignals>;
+
+    /// Read only the live input destination; platform implementations may avoid
+    /// slower context enrichment such as browser automation.
+    fn capture_target(&self) -> Option<TargetAppGuard> {
+        self.collect().map(|signals| TargetAppGuard::from(&signals))
+    }
 }
 
 pub(crate) fn default_source() -> Arc<dyn ContextSignalSource> {

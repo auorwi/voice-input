@@ -1312,6 +1312,12 @@ impl PipelineHandle {
             .snapshot_for_recording_enabled(config_data.context_adaptation_enabled);
         #[cfg(target_os = "macos")]
         {
+            // Context enrichment stays cached, but keyboard routing must use the
+            // application in front at this keystroke, not the previous poll.
+            app_ctx.target_guard = self
+                .context_detector
+                .capture_target_now()
+                .unwrap_or_default();
             app_ctx.focused_input =
                 output::focused_input::capture_focused_input(app_ctx.target_guard.process_id);
         }

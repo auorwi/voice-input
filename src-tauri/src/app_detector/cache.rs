@@ -278,13 +278,18 @@ impl ContextDetectorHandle {
     }
 
     pub fn target_still_matches_now(&self, expected: &TargetAppGuard) -> bool {
+        // Missing capture is not permission to type into a later foreground app.
+        // Copy-only output does not consult this guard.
         if expected.is_empty() {
-            return true;
+            return false;
         }
-        self.source
-            .collect()
-            .map(|signals| expected.matches(&TargetAppGuard::from(&signals)))
+        self.capture_target_now()
+            .map(|current| expected.matches(&current))
             .unwrap_or(false)
+    }
+
+    pub fn capture_target_now(&self) -> Option<TargetAppGuard> {
+        self.source.capture_target()
     }
 
     pub fn restore_target_application(&self, expected: &TargetAppGuard) -> bool {
@@ -537,6 +542,87 @@ mod tests {
         let captured = handle.snapshot_for_recording();
         assert_eq!(captured.profile.id, "chat.slack");
         assert_eq!(captured.target_guard.process_id, Some(77));
+    }
+
+    #[test]
+    fn missing_live_target_never_authorizes_automated_input_into_a_later_app() {
+        let source = Arc::new(FakeSource::new(None));
+        let handle = detector(source.clone());
+        let unknown = handle.capture_target_now().unwrap_or_default();
+        assert!(unknown.is_empty());
+        source.set(Some(gmail_signals()));
+        assert!(!handle.target_still_matches_now(&unknown));
+    }
+
+    #[test]
+    fn live_target_checks_do_not_trigger_context_enrichment() {
+        struct TargetOnlySource {
+            context_calls: AtomicUsize,
+        }
+        impl ContextSignalSource for TargetOnlySource {
+            fn collect(&self) -> Option<ContextSignals> {
+                self.context_calls.fetch_add(1, Ordering::SeqCst);
+                Some(gmail_signals())
+            }
+            fn capture_target(&self) -> Option<TargetAppGuard> {
+                Some(TargetAppGuard {
+                    process_id: Some(77),
+                    native_identity: None,
+                })
+            }
+        }
+        let source = Arc::new(TargetOnlySource {
+            context_calls: AtomicUsize::new(0),
+        });
+        let handle = ContextDetectorHandle::start_with_source(
+            source.clone(),
+            AppRegistry::builtin().unwrap(),
+            Duration::from_secs(60),
+            Duration::from_secs(60),
+        );
+        wait_for_profile(&handle, "email.gmail");
+        let before = source.context_calls.load(Ordering::SeqCst);
+        let current = handle.capture_target_now().unwrap();
+        assert_eq!(current.process_id, Some(77));
+        assert!(handle.target_still_matches_now(&current));
+        assert_eq!(source.context_calls.load(Ordering::SeqCst), before);
+    }
+
+    #[test]
+    fn input_target_uses_the_current_app_even_while_context_cache_is_fresh() {
+        let source = Arc::new(FakeSource::new(Some(gmail_signals())));
+        let handle = ContextDetectorHandle::start_with_source(
+            source.clone(),
+            AppRegistry::builtin().unwrap(),
+            Duration::from_secs(60),
+            Duration::from_secs(60),
+        );
+        wait_for_profile(&handle, "email.gmail");
+        source.set(Some(ContextSignals {
+            process_id: Some(77),
+            native_identity: Some("com.tencent.xinWeChat".into()),
+            ..ContextSignals::default()
+        }));
+        assert_eq!(
+            handle.snapshot_for_recording().target_guard.process_id,
+            Some(42)
+        );
+        assert_eq!(
+            handle.capture_target_now(),
+            Some(TargetAppGuard {
+                process_id: Some(77),
+                native_identity: Some("com.tencent.xinWeChat".into()),
+            })
+        );
+    }
+
+    #[test]
+    fn unavailable_live_input_target_does_not_fall_back_to_previous_app() {
+        let source = Arc::new(FakeSource::new(Some(gmail_signals())));
+        let handle = detector(source.clone());
+        wait_for_profile(&handle, "email.gmail");
+        source.set(None);
+        assert_eq!(handle.capture_target_now(), None);
     }
 
     #[test]

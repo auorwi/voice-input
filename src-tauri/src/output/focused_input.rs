@@ -220,6 +220,7 @@ pub fn capture_focused_input(process_id: Option<u32>) -> FocusedInput {
 
 #[cfg(target_os = "macos")]
 mod macos {
+    use super::super::focus_resolver::{self, FocusTree, NodeState};
     use super::{
         assess_readback, classify_focused_element, FocusKind, FocusedInput, InsertionConfirmation,
         InsertionProbe,
@@ -238,6 +239,13 @@ mod macos {
             element: CFRef,
             attribute: CFRef,
             value: *mut CFRef,
+        ) -> i32;
+        fn AXUIElementCopyAttributeValues(
+            element: CFRef,
+            attribute: CFRef,
+            index: isize,
+            count: isize,
+            values: *mut CFRef,
         ) -> i32;
         fn AXUIElementIsAttributeSettable(
             element: CFRef,
@@ -260,7 +268,11 @@ mod macos {
         fn CFBooleanGetTypeID() -> usize;
         fn CFBooleanGetValue(value: CFRef) -> u8;
         fn CFGetTypeID(value: CFRef) -> usize;
+        fn CFArrayGetTypeID() -> usize;
+        fn CFArrayGetCount(value: CFRef) -> isize;
+        fn CFArrayGetValueAtIndex(value: CFRef, index: isize) -> CFRef;
         fn CFHash(value: CFRef) -> usize;
+        fn CFRetain(value: CFRef) -> CFRef;
         fn CFRelease(value: CFRef);
     }
 
@@ -342,10 +354,120 @@ mod macos {
             return None;
         }
         let application = OwnedCF(application);
-        unsafe { AXUIElementSetMessagingTimeout(application.0, 0.25) };
-        let element = attribute(application.0, b"AXFocusedUIElement\0").ok()?;
-        unsafe { AXUIElementSetMessagingTimeout(element.0, 0.25) };
+        unsafe { AXUIElementSetMessagingTimeout(application.0, 0.05) };
+        let element = focus_resolver::resolve(&mut MacFocusTree {
+            application: application.0,
+            deadline: std::time::Instant::now() + std::time::Duration::from_millis(400),
+        })?;
         Some((application, element))
+    }
+
+    struct MacFocusTree {
+        application: CFRef,
+        deadline: std::time::Instant,
+    }
+
+    impl FocusTree for MacFocusTree {
+        type Node = OwnedCF;
+
+        fn app_focus(&mut self) -> Option<OwnedCF> {
+            attribute(self.application, b"AXFocusedUIElement\0").ok()
+        }
+
+        fn window(&mut self) -> Option<OwnedCF> {
+            attribute(self.application, b"AXFocusedWindow\0").ok()
+        }
+
+        fn id(&self, node: &OwnedCF) -> u64 {
+            unsafe { CFHash(node.0) as u64 }
+        }
+
+        fn state(&mut self, node: &OwnedCF) -> NodeState {
+            unsafe { AXUIElementSetMessagingTimeout(node.0, 0.05) };
+            let role = attribute(node.0, b"AXRole\0")
+                .ok()
+                .and_then(|value| string(value.0));
+            let subrole = attribute(node.0, b"AXSubrole\0")
+                .ok()
+                .and_then(|value| string(value.0));
+            let enabled = attribute(node.0, b"AXEnabled\0")
+                .ok()
+                .and_then(|value| bool_value(value.0));
+            let focused = attribute(node.0, b"AXFocused\0")
+                .ok()
+                .and_then(|value| bool_value(value.0));
+            let container = enabled != Some(false)
+                && !subrole
+                    .as_deref()
+                    .is_some_and(|value| value.contains("Secure"))
+                && matches!(
+                    role.as_deref(),
+                    None | Some(
+                        "AXWindow"
+                            | "AXApplication"
+                            | "AXGroup"
+                            | "AXUnknown"
+                            | "AXSplitGroup"
+                            | "AXScrollArea"
+                    )
+                );
+            let settable = if container {
+                None
+            } else {
+                is_settable(node.0, b"AXValue\0")
+            };
+            NodeState {
+                kind: classify_focused_element(
+                    role.as_deref(),
+                    subrole.as_deref(),
+                    enabled,
+                    settable,
+                ),
+                focused: focused == Some(true),
+                container,
+            }
+        }
+
+        fn children(&mut self, node: &OwnedCF, limit: usize) -> Option<Vec<OwnedCF>> {
+            if limit == 0 || self.expired() {
+                return None;
+            }
+            let Some(name) = attribute_name(b"AXChildren\0") else {
+                return None;
+            };
+            let mut values = std::ptr::null();
+            let status = unsafe {
+                AXUIElementCopyAttributeValues(node.0, name.0, 0, limit as isize, &mut values)
+            };
+            if values.is_null() {
+                return None;
+            }
+            let values = OwnedCF(values);
+            if status != 0 || unsafe { CFGetTypeID(values.0) } != unsafe { CFArrayGetTypeID() } {
+                return None;
+            }
+            let count = unsafe { CFArrayGetCount(values.0) }
+                .max(0)
+                .min(limit as isize);
+            Some(
+                (0..count)
+                    .filter_map(|index| {
+                        let value = unsafe { CFArrayGetValueAtIndex(values.0, index) };
+                        (!value.is_null()).then(|| OwnedCF(unsafe { CFRetain(value) }))
+                    })
+                    .collect(),
+            )
+        }
+
+        fn expired(&self) -> bool {
+            std::time::Instant::now() >= self.deadline
+        }
+
+        fn retry(&mut self) {
+            if !self.expired() {
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+        }
     }
 
     fn selected_range(element: CFRef) -> Option<CFRange> {
