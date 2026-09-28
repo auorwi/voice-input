@@ -78,12 +78,12 @@ pub fn decide_after_output(
     status: crate::output::InsertStatus,
     confirmation: InsertionConfirmation,
 ) -> DestinationDecision {
-    if status == crate::output::InsertStatus::Inserted
-        && confirmation != InsertionConfirmation::NotInserted
-    {
-        DestinationDecision::Insert
-    } else {
-        DestinationDecision::Popup("output_failed")
+    // AX readback is diagnostic only: web editors can expose stale values,
+    // normalized markup or partial ranges after a successful dispatch. It must
+    // neither veto that dispatch nor hide an explicit transport failure.
+    match (status, confirmation) {
+        (crate::output::InsertStatus::Inserted, _) => DestinationDecision::Insert,
+        _ => DestinationDecision::Popup("output_failed"),
     }
 }
 
@@ -600,6 +600,25 @@ mod tests {
     }
 
     #[test]
+    fn successful_browser_dispatch_is_not_overridden_by_stale_or_normalized_readback() {
+        let probe = probe(Some(""), Some((0, 0)));
+        // Rich text accessibility may lag, add its own newline, or expose a
+        // truncated range even after the keyboard backend completed the write.
+        for (value, range) in [
+            (Some(""), None),
+            (Some("浏览器测试\n"), None),
+            (None, Some("浏览器")),
+        ] {
+            let confirmation = assess_readback(&probe, "浏览器测试", value, range);
+            assert_eq!(confirmation, InsertionConfirmation::NotInserted);
+            assert_eq!(
+                decide_after_output(crate::output::InsertStatus::Inserted, confirmation),
+                DestinationDecision::Insert
+            );
+        }
+    }
+
+    #[test]
     fn full_value_confirms_when_parameterized_range_is_unsupported() {
         let probe = probe(Some("前后"), Some((1, 0)));
         assert_eq!(
@@ -644,7 +663,7 @@ mod tests {
     }
 
     #[test]
-    fn readable_unchanged_partial_and_incorrect_output_remain_recoverable() {
+    fn unchanged_partial_and_incorrect_readback_is_reported_as_a_mismatch() {
         let probe = probe(Some(""), Some((0, 0)));
         for after in ["", "完整", "错误文字", " 完整文字"] {
             assert_eq!(
@@ -716,7 +735,7 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn only_a_final_readable_failure_triggers_recovery() {
+    async fn readback_diagnostics_keep_the_final_observation() {
         use InsertionConfirmation::*;
         assert_eq!(
             wait_for_insertion_confirmation(|| NotInserted).await,
@@ -830,26 +849,27 @@ mod tests {
     }
 
     #[test]
-    fn observed_failure_and_transport_failure_preserve_full_result() {
+    fn transport_failures_preserve_full_result_regardless_of_readback() {
         use crate::output::InsertStatus;
-        assert_eq!(
-            decide_after_output(InsertStatus::Inserted, InsertionConfirmation::NotInserted),
-            DestinationDecision::Popup("output_failed")
-        );
-        assert_eq!(
-            decide_after_output(
+        for confirmation in [
+            InsertionConfirmation::Confirmed,
+            InsertionConfirmation::NotInserted,
+            InsertionConfirmation::Unavailable,
+        ] {
+            for status in [
+                InsertStatus::Failed,
+                InsertStatus::PartiallyInserted,
                 InsertStatus::CopiedFallback,
-                InsertionConfirmation::Confirmed
-            ),
-            DestinationDecision::Popup("output_failed")
-        );
-        assert_eq!(
-            decide_after_output(InsertStatus::Failed, InsertionConfirmation::Unavailable),
-            DestinationDecision::Popup("output_failed")
-        );
-        assert_eq!(
-            decide_after_output(InsertStatus::Inserted, InsertionConfirmation::Confirmed),
-            DestinationDecision::Insert
-        );
+            ] {
+                assert_eq!(
+                    decide_after_output(status, confirmation),
+                    DestinationDecision::Popup("output_failed")
+                );
+            }
+            assert_eq!(
+                decide_after_output(InsertStatus::Inserted, confirmation),
+                DestinationDecision::Insert
+            );
+        }
     }
 }

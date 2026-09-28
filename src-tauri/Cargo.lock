@@ -3329,7 +3329,7 @@ dependencies = [
 
 [[package]]
 name = "opentypeless"
-version = "1.1.65"
+version = "1.1.66"
 dependencies = [
  "anyhow",
  "arboard",
