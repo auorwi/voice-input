@@ -94,7 +94,7 @@ mod tests {
     #[test]
     fn model_capabilities_requires_exact_certified_tuple() {
         assert_eq!(
-            model_capability("cloud", MANAGED_BASE, "default", CONTEXT_PROMPT_VERSION),
+            model_capability("cloud", MANAGED_BASE, "default", "context-v1"),
             ModelCapability::Certified
         );
     }
@@ -111,7 +111,7 @@ mod tests {
             ModelCapability::BestEffort
         );
         assert_eq!(
-            model_capability("cloud", MANAGED_BASE, "default", "context-v2"),
+            model_capability("cloud", MANAGED_BASE, "default", CONTEXT_PROMPT_VERSION),
             ModelCapability::BestEffort
         );
     }

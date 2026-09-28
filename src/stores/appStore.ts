@@ -54,7 +54,7 @@ export type InsertStatus = 'inserted' | 'copiedFallback' | 'failed' | 'partially
 export type HotkeyMode = 'hold' | 'toggle'
 export type Theme = 'light' | 'dark' | 'system'
 export type PolishChineseScript = 'preserve' | 'simplified' | 'traditional'
-export type PolishStyle = 'minimal' | 'clean' | 'structured' | 'professional'
+export type PolishStyle = 'clean' | 'structured'
 export type SceneSource = 'custom' | 'builtin' | 'cloud'
 export type ContextFamily =
   | 'email'

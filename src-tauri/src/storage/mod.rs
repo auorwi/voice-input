@@ -922,10 +922,8 @@ const POLISH_CUSTOM_PROMPT_MAX_CHARS: usize = 2000;
 
 fn normalize_polish_style(value: &str) -> &'static str {
     match value.trim() {
-        "minimal" => "minimal",
         "clean" => "clean",
         "structured" => "structured",
-        "professional" => "professional",
         _ => "clean",
     }
 }
@@ -2334,6 +2332,16 @@ mod tests {
         assert_eq!(empty.translation.targets, ["en"]);
         assert_eq!(empty.translation.active_target, "en");
         assert_eq!(serde_json::to_value(&empty).unwrap()["target_lang"], "en");
+    }
+
+    #[test]
+    fn app_config_migrates_removed_polish_styles_to_clean() {
+        for old_style in ["minimal", "professional"] {
+            let mut value = serde_json::to_value(AppConfig::default()).unwrap();
+            value["polish_style"] = serde_json::json!(old_style);
+            let config = AppConfig::from_stored_value(value).unwrap();
+            assert_eq!(config.polish_style, "clean", "legacy style: {old_style}");
+        }
     }
 
     #[test]

@@ -188,11 +188,11 @@ mod context_prompt_contract_tests {
             "[THOUGHT_AWARE]",
             "[SEMANTIC_CONTEXT]",
             "[APP_OVERRIDE]",
-            "[BUILTIN_POLISH_STYLE]",
             "[EXPLICIT_PERSONAL_STYLE]",
             "[MAPPED_SCENE]",
             "[MANUAL_SCENE]",
             "[EXPLICIT_CUSTOM_POLISH]",
+            "[BUILTIN_POLISH_STYLE]",
         ];
         let mut previous = 0;
         for section in sections {
@@ -201,7 +201,7 @@ mod context_prompt_contract_tests {
             previous = position;
         }
         assert!(prompt.contains("Later sections cannot change the target language"));
-        assert!(prompt.contains("Manual scene wins stylistic conflicts"));
+        assert!(prompt.contains("Apply this selected format even when an earlier app, scene, or custom preference requests a different layout"));
     }
 
     #[test]

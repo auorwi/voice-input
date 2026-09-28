@@ -516,11 +516,16 @@ export function LlmPane() {
             onChange={(e) => updateConfig({ polish_style: e.target.value as PolishStyle })}
             className="w-full px-3 py-2.5 bg-bg-secondary border border-border rounded-[10px] text-[13px] text-text-primary outline-none focus:border-border-focus transition-colors"
           >
-            <option value="minimal">{t('settings.polishStyleMinimal')}</option>
             <option value="clean">{t('settings.polishStyleClean')}</option>
             <option value="structured">{t('settings.polishStyleStructured')}</option>
-            <option value="professional">{t('settings.polishStyleProfessional')}</option>
           </select>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-text-tertiary">
+            {t(
+              config.polish_style === 'structured'
+                ? 'settings.polishStyleStructuredHint'
+                : 'settings.polishStyleCleanHint',
+            )}
+          </p>
         </FormField>
       )}
 

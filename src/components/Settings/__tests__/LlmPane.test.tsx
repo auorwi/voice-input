@@ -446,6 +446,21 @@ describe('LlmPane', () => {
   })
 
   describe('AI polish behavior settings', () => {
+    it('offers only Clean and Structured so every displayed style is supported', () => {
+      render(<LlmPane />)
+      const options = screen
+        .getAllByRole('option')
+        .filter((option) =>
+          ['minimal', 'clean', 'structured', 'professional'].includes(
+            (option as HTMLOptionElement).value,
+          ),
+        )
+      expect(options.map((option) => (option as HTMLOptionElement).value)).toEqual([
+        'clean',
+        'structured',
+      ])
+    })
+
     it('shows Clean as the default polish style outside advanced settings', () => {
       render(<LlmPane />)
 
