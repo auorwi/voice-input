@@ -41,18 +41,17 @@ export function History() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [closeEntryMenu, menuEntryId])
 
-  const filtered = useMemo(
-    () =>
-      search
-        ? history.filter(
-            (h) =>
-              h.polished_text.includes(search) ||
-              h.raw_text.includes(search) ||
-              h.context_label.includes(search),
-          )
-        : history,
-    [history, search],
-  )
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase()
+    return q
+      ? history.filter(
+          (h) =>
+            h.polished_text.toLowerCase().includes(q) ||
+            h.raw_text.toLowerCase().includes(q) ||
+            h.context_label.toLowerCase().includes(q),
+        )
+      : history
+  }, [history, search])
 
   const handleCopy = (id: number, text: string) => {
     navigator.clipboard

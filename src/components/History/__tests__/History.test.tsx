@@ -132,3 +132,58 @@ describe('History correction creation', () => {
     confirmSpy.mockRestore()
   })
 })
+
+describe('History search filtering', () => {
+  const englishEntry: HistoryEntry = {
+    ...entry,
+    id: 2,
+    raw_text: 'hello world',
+    polished_text: 'Hello World',
+  }
+  const chineseEntry: HistoryEntry = {
+    ...entry,
+    id: 3,
+    context_label: '微信',
+    raw_text: '你好世界',
+    polished_text: '你好世界',
+  }
+
+  const searchInput = () => screen.getByPlaceholderText('history.searchPlaceholder')
+
+  beforeEach(() => {
+    useAppStore.setState({ history: [englishEntry, chineseEntry], correctionRules: [] })
+  })
+
+  afterEach(() => {
+    cleanup()
+    useAppStore.setState(useAppStore.getInitialState())
+  })
+
+  it.each(['hello', 'HELLO', 'Hello'])('matches English regardless of case: %s', (query) => {
+    render(<History />)
+    fireEvent.change(searchInput(), { target: { value: query } })
+    expect(screen.getByText('Hello World')).toBeInTheDocument()
+    expect(screen.queryByText('你好世界')).toBeNull()
+  })
+
+  it('matches Chinese keywords and excludes non-matching entries', () => {
+    render(<History />)
+    fireEvent.change(searchInput(), { target: { value: '世界' } })
+    expect(screen.getByText('你好世界')).toBeInTheDocument()
+    expect(screen.queryByText('Hello World')).toBeNull()
+  })
+
+  it('shows all entries when the search term is empty', () => {
+    render(<History />)
+    expect(screen.getByText('Hello World')).toBeInTheDocument()
+    expect(screen.getByText('你好世界')).toBeInTheDocument()
+  })
+
+  it('shows the no-results message when nothing matches', () => {
+    render(<History />)
+    fireEvent.change(searchInput(), { target: { value: 'zzz' } })
+    expect(screen.getByText('history.noResults')).toBeInTheDocument()
+    expect(screen.queryByText('Hello World')).toBeNull()
+    expect(screen.queryByText('你好世界')).toBeNull()
+  })
+})
