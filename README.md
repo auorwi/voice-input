@@ -2,7 +2,7 @@
 
 面向个人使用的 macOS 语音输入工具，基于 [OpenTypeless](https://github.com/tover0314-w/opentypeless) v1.1.60（MIT）定制。使用自己的语音识别和大模型 API 密钥，将语音转成可直接输入或复制的文字。
 
-> 本仓库维护 Voice Input 个人版，已在 Apple Silicon Mac 上构建。上游保留的其他平台代码、多语言文档和历史发布记录不代表本项目已验证相应功能。本版不接入上游账户、订阅或自动更新。
+> 本仓库维护 Voice Input 个人版，仅维护 macOS 版本，已在 Apple Silicon Mac 上构建；CI 也只验证 Apple Silicon（ARM64），不代表已验证 Intel Mac。上游保留的其他平台代码、多语言文档和历史发布记录不代表本项目已验证相应功能。本版不接入上游账户、订阅或自动更新。
 
 ## 主要功能
 

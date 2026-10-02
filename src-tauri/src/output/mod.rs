@@ -130,6 +130,9 @@ pub struct OutputOutcome {
     pub warning: Option<UserError>,
 }
 
+// async_trait 宏展开会为方法生成 #[must_use]，与 boxed Future 自带的 must_use 重复；
+// 上游未抑制 clippy 1.99 的 double_must_use，这里仅对本 trait 豁免。
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait TextOutput: Send + Sync {
     async fn type_text(&self, text: &str) -> Result<InsertResult, AppError>;

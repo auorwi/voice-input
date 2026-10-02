@@ -20,14 +20,20 @@ export function DictationResult() {
   const [results, setResults] = useState<PendingDictationResult[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [drafts, setDrafts] = useState<Record<string, string>>({})
-  const [feedback, setFeedback] = useState<{ sessionId: string; text: string; message: string } | null>(null)
+  const [feedback, setFeedback] = useState<{
+    sessionId: string
+    text: string
+    message: string
+  } | null>(null)
   const [busy, setBusy] = useState(false)
   const [loadError, setLoadError] = useState(false)
   const latestRefresh = useRef(0)
   const selected = results.find((item) => item.sessionId === selectedId) ?? results[0]
   const selectedText = selected ? (drafts[selected.sessionId] ?? selected.text) : ''
-  const visibleFeedback = feedback && feedback.sessionId === selected?.sessionId && feedback.text === selectedText
-    ? feedback.message : ''
+  const visibleFeedback =
+    feedback && feedback.sessionId === selected?.sessionId && feedback.text === selectedText
+      ? feedback.message
+      : ''
 
   const refresh = useCallback(async () => {
     const request = ++latestRefresh.current
@@ -35,10 +41,15 @@ export function DictationResult() {
       const pending = await listPendingDictationResults()
       if (request !== latestRefresh.current) return
       setResults(pending)
-      setDrafts((current) => Object.fromEntries(
-        Object.entries(current).filter(([id]) => pending.some((item) => item.sessionId === id)),
-      ))
-      setSelectedId((id) => pending.find((item) => item.sessionId === id)?.sessionId ?? pending[0]?.sessionId ?? null)
+      setDrafts((current) =>
+        Object.fromEntries(
+          Object.entries(current).filter(([id]) => pending.some((item) => item.sessionId === id)),
+        ),
+      )
+      setSelectedId(
+        (id) =>
+          pending.find((item) => item.sessionId === id)?.sessionId ?? pending[0]?.sessionId ?? null,
+      )
       setLoadError(false)
     } catch {
       if (request === latestRefresh.current) setLoadError(true)
@@ -50,13 +61,15 @@ export function DictationResult() {
     let unlisten: (() => void) | undefined
     void listen('dictation-result:changed', () => {
       if (active) void refresh()
-    }).then((dispose) => {
-      if (active) unlisten = dispose
-      else dispose()
-      if (active) void refresh()
-    }).catch(() => {
-      if (active) void refresh()
     })
+      .then((dispose) => {
+        if (active) unlisten = dispose
+        else dispose()
+        if (active) void refresh()
+      })
+      .catch(() => {
+        if (active) void refresh()
+      })
     return () => {
       active = false
       latestRefresh.current += 1
@@ -86,7 +99,11 @@ export function DictationResult() {
       await copyPendingDictationResult(selected.sessionId, text)
       setFeedback({ sessionId: selected.sessionId, text, message: '已复制' })
     } catch {
-      setFeedback({ sessionId: selected.sessionId, text, message: '复制失败，请选中文字手动复制。' })
+      setFeedback({
+        sessionId: selected.sessionId,
+        text,
+        message: '复制失败，请选中文字手动复制。',
+      })
     } finally {
       setBusy(false)
     }
@@ -100,7 +117,11 @@ export function DictationResult() {
       setFeedback(null)
       await refresh()
     } catch {
-      setFeedback({ sessionId: selected.sessionId, text: selectedText, message: '关闭失败，请重试。' })
+      setFeedback({
+        sessionId: selected.sessionId,
+        text: selectedText,
+        message: '关闭失败，请重试。',
+      })
     } finally {
       setBusy(false)
     }
@@ -110,7 +131,9 @@ export function DictationResult() {
     <main className="flex h-screen flex-col gap-4 overflow-hidden bg-bg-primary p-5 text-text-primary">
       <header className="flex items-center justify-between">
         <h1 className="text-lg font-semibold">语音输入结果</h1>
-        <span className="text-xs text-text-tertiary">{results.length > 1 ? `${results.length} 条待处理` : ''}</span>
+        <span className="text-xs text-text-tertiary">
+          {results.length > 1 ? `${results.length} 条待处理` : ''}
+        </span>
       </header>
       {loadError && <p role="alert">无法读取结果，请稍后重试。</p>}
       {results.length > 1 && (
@@ -120,7 +143,10 @@ export function DictationResult() {
               key={item.sessionId}
               type="button"
               aria-pressed={item.sessionId === selected?.sessionId}
-              onClick={() => { setSelectedId(item.sessionId); setFeedback(null) }}
+              onClick={() => {
+                setSelectedId(item.sessionId)
+                setFeedback(null)
+              }}
               className="max-w-40 truncate rounded-lg border border-border px-3 py-1 text-sm"
             >
               {index + 1} {item.text.slice(0, 16)}
@@ -130,8 +156,12 @@ export function DictationResult() {
       )}
       {selected && (
         <>
-          <p className="text-sm text-text-secondary">{reasons[selected.reason] ?? reasons.unknown_target}</p>
-          <p id="edit-result-hint" className="text-xs text-text-tertiary">可直接修改下方文字，再复制到需要的位置。</p>
+          <p className="text-sm text-text-secondary">
+            {reasons[selected.reason] ?? reasons.unknown_target}
+          </p>
+          <p id="edit-result-hint" className="text-xs text-text-tertiary">
+            可直接修改下方文字，再复制到需要的位置。
+          </p>
           <textarea
             aria-label="完整识别文字"
             aria-describedby="edit-result-hint"
@@ -144,10 +174,26 @@ export function DictationResult() {
             }}
           />
           <div className="flex items-center justify-between gap-3">
-            <span role="status" className="text-sm text-text-secondary">{visibleFeedback}</span>
+            <span role="status" className="text-sm text-text-secondary">
+              {visibleFeedback}
+            </span>
             <div className="flex gap-2">
-              <button type="button" disabled={busy} onClick={closeSelected} className="rounded-lg border border-border px-4 py-2">关闭</button>
-              <button type="button" disabled={busy || !selectedText.length} onClick={copySelected} className="rounded-lg bg-accent px-5 py-2 font-medium text-white">复制</button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={closeSelected}
+                className="rounded-lg border border-border px-4 py-2"
+              >
+                关闭
+              </button>
+              <button
+                type="button"
+                disabled={busy || !selectedText.length}
+                onClick={copySelected}
+                className="rounded-lg bg-accent px-5 py-2 font-medium text-white"
+              >
+                复制
+              </button>
             </div>
           </div>
         </>

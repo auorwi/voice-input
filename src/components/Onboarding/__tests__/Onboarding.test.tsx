@@ -27,9 +27,19 @@ vi.mock('react-i18next', () => ({
 }))
 
 vi.mock('../OnboardingLayout', () => ({
-  OnboardingLayout: ({ children, onBack, onNext }: { children: React.ReactNode; onBack: () => void; onNext: () => void }) => (
+  OnboardingLayout: ({
+    children,
+    onBack,
+    onNext,
+  }: {
+    children: React.ReactNode
+    onBack: () => void
+    onNext: () => void
+  }) => (
     <div>
-      <button type="button" onClick={onNext}>Next</button>
+      <button type="button" onClick={onNext}>
+        Next
+      </button>
       <button type="button" onClick={onBack}>
         Back
       </button>
