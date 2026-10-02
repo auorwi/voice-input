@@ -1,5 +1,17 @@
 {
   "worktree": {
     "setup": "npm ci"
+  },
+  "scripts": {
+    "运行测试": {
+      "command": "npm test"
+    },
+    "检查代码": {
+      "command": "npm run lint"
+    },
+    "web": {
+      "type": "service",
+      "command": "npm run dev -- --port \"$PASEO_PORT\""
+    }
   }
 }
