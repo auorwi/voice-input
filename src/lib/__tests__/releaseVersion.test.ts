@@ -12,9 +12,11 @@ describe('release version wiring', () => {
     expect(constantsSource).toContain('import.meta.env.VITE_APP_VERSION')
   })
 
-  it('builds and verifies Linux arm64 release artifacts on a native runner', () => {
-    expect(ciWorkflowSource).toContain('platform: ubuntu-22.04-arm')
-    expect(ciWorkflowSource).toContain('target: aarch64-unknown-linux-gnu')
+  it('limits CI Rust checks to macOS Apple Silicon and keeps Linux verification scripts intact', () => {
+    // 项目仅维护 macOS 版本，CI 只验证 Apple Silicon；Linux 发布脚本保留但未接入 CI。
+    expect(ciWorkflowSource).toContain('runs-on: macos-latest')
+    expect(ciWorkflowSource).toContain('aarch64-apple-darwin')
+    expect(ciWorkflowSource).not.toContain('ubuntu-22.04-arm')
     expect(linuxVerificationScriptSource).toContain(
       'verification_dir="release-verification/linux-${LINUX_ARCH}"',
     )
@@ -26,9 +28,7 @@ describe('release version wiring', () => {
     )
   })
 
-  it('excludes the bundled Wayland client from Linux AppImages', () => {
-    expect(ciWorkflowSource).toContain('Test Linux AppImage packaging guards')
-    expect(ciWorkflowSource).toContain('./.github/scripts/test-linux-appimage-packaging.sh')
+  it('keeps the Wayland exclusion wiring in the Linux AppImage packaging scripts', () => {
     expect(linuxdeployPrepareScriptSource).toContain('linuxdeploy-exclude-wrapper.rs')
     expect(linuxdeployPrepareScriptSource).toContain(
       'linuxdeploy-plugin-appimage-exclude-wrapper.sh',
