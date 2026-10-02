@@ -97,18 +97,27 @@ pub enum InsertionConfirmation {
 
 #[derive(Clone, Debug)]
 pub struct InsertionProbe {
+    // 字段仅在 macOS 探针实现与单元测试中构造和读取；非 macOS 平台只把该类型
+    // 用作 begin/confirm 函数签名中的占位（永不构造），故逐字段设置平台条件。
+    #[cfg(any(target_os = "macos", test))]
     process_id: u32,
+    #[cfg(any(target_os = "macos", test))]
     element_id: u64,
+    #[cfg(any(target_os = "macos", test))]
     selection: Option<(usize, usize)>,
+    #[cfg(any(target_os = "macos", test))]
     before_value: Option<String>,
+    #[cfg(any(target_os = "macos", test))]
     before_range: Option<String>,
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn normalized_lines(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\r', "\n")
 }
 
 // AX selection offsets count UTF-16 units, not bytes or Unicode scalar values.
+#[cfg(any(target_os = "macos", test))]
 fn expected_value(before: &str, selection: (usize, usize), text: &str) -> Option<String> {
     let units: Vec<u16> = before.encode_utf16().collect();
     let (start, length) = selection;
@@ -118,6 +127,7 @@ fn expected_value(before: &str, selection: (usize, usize), text: &str) -> Option
     Some(format!("{prefix}{text}{suffix}"))
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn assess_readback(
     probe: &InsertionProbe,
     text: &str,
@@ -432,9 +442,7 @@ mod macos {
             if limit == 0 || self.expired() {
                 return None;
             }
-            let Some(name) = attribute_name(b"AXChildren\0") else {
-                return None;
-            };
+            let name = attribute_name(b"AXChildren\0")?;
             let mut values = std::ptr::null();
             let status = unsafe {
                 AXUIElementCopyAttributeValues(node.0, name.0, 0, limit as isize, &mut values)

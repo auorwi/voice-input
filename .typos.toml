@@ -12,6 +12,8 @@ speaches = "speaches"
 Speaches = "Speaches"
 SPEACHES = "SPEACHES"
 visibile = "visibile"
+# OpenSSL CLI parameter used in scripts/macos_signing.py
+passin = "passin"
 
 [files]
 extend-exclude = [

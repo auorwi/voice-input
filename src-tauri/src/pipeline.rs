@@ -589,32 +589,9 @@ impl StreamingInsertWorker {
     }
 }
 
-fn spawn_streaming_insert_worker(
-    app_handle: tauri::AppHandle,
-    abort_flag: Arc<AtomicBool>,
-    session_lifecycle: PipelineSessionLifecycle,
-    run_id: Option<u64>,
-    context_detector: app_detector::ContextDetectorHandle,
-    strategy: output::InsertionStrategy,
-    windows_sendinput_options: output::windows_sendinput::WindowsSendInputOptions,
-    expected_target_guard: TargetAppGuard,
-    expected_target_label: String,
-) -> StreamingInsertWorker {
+fn spawn_streaming_insert_worker(context: StreamingInsertWorkerContext) -> StreamingInsertWorker {
     let (sender, receiver) = mpsc::unbounded_channel();
-    let handle = tokio::spawn(run_streaming_insert_worker(
-        StreamingInsertWorkerContext {
-            app_handle,
-            abort_flag,
-            session_lifecycle,
-            run_id,
-            context_detector,
-            strategy,
-            windows_sendinput_options,
-            expected_target_guard,
-            expected_target_label,
-        },
-        receiver,
-    ));
+    let handle = tokio::spawn(run_streaming_insert_worker(context, receiver));
     StreamingInsertWorker { sender, handle }
 }
 
@@ -1307,20 +1284,22 @@ impl PipelineHandle {
             .preloaded_config
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = Some(config_data.clone());
-        let mut app_ctx = self
+        let app_ctx = self
             .context_detector
             .snapshot_for_recording_enabled(config_data.context_adaptation_enabled);
+        // Context enrichment stays cached, but keyboard routing must use the
+        // application in front at this keystroke, not the previous poll.
         #[cfg(target_os = "macos")]
-        {
-            // Context enrichment stays cached, but keyboard routing must use the
-            // application in front at this keystroke, not the previous poll.
+        let app_ctx = {
+            let mut app_ctx = app_ctx;
             app_ctx.target_guard = self
                 .context_detector
                 .capture_target_now()
                 .unwrap_or_default();
             app_ctx.focused_input =
                 output::focused_input::capture_focused_input(app_ctx.target_guard.process_id);
-        }
+            app_ctx
+        };
         *self
             .preloaded_app_ctx
             .lock()
@@ -2381,22 +2360,22 @@ impl PipelineHandle {
             .then(|| streaming_insert_strategy_for_runtime(config, selected_text.as_deref()))
             .flatten();
         let mut streaming_worker = streaming_strategy.map(|strategy| {
-            spawn_streaming_insert_worker(
-                self.app_handle.clone(),
-                self.abort_flag.clone(),
-                self.session_lifecycle.clone(),
+            spawn_streaming_insert_worker(StreamingInsertWorkerContext {
+                app_handle: self.app_handle.clone(),
+                abort_flag: self.abort_flag.clone(),
+                session_lifecycle: self.session_lifecycle.clone(),
                 run_id,
-                self.context_detector.clone(),
+                context_detector: self.context_detector.clone(),
                 strategy,
-                output::windows_sendinput::WindowsSendInputOptions {
+                windows_sendinput_options: output::windows_sendinput::WindowsSendInputOptions {
                     newline_mode:
                         output::windows_sendinput::WindowsSendInputNewlineMode::from_config_value(
                             &config.windows_sendinput_newline_mode,
                         ),
                 },
-                app_ctx.target_guard.clone(),
-                app_ctx.profile.app_label.clone(),
-            )
+                expected_target_guard: app_ctx.target_guard.clone(),
+                expected_target_label: app_ctx.profile.app_label.clone(),
+            })
         });
         let streaming_sender = streaming_worker
             .as_ref()
@@ -3229,6 +3208,8 @@ impl PipelineHandle {
         Ok(insert_result)
     }
 
+    // 调用点全部位于 cfg(target_os = "macos") 分支内，非 macOS 平台不使用。
+    #[cfg(target_os = "macos")]
     fn show_pending_output(
         &self,
         text: &str,
@@ -3245,6 +3226,7 @@ impl PipelineHandle {
         self.publish_pending_output(text, reason, strategy)
     }
 
+    #[cfg(target_os = "macos")]
     fn publish_pending_output(
         &self,
         text: &str,
