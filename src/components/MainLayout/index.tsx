@@ -12,7 +12,6 @@ const baseNavItems: { id: Route; labelKey: string; icon: typeof Home }[] = [
   { id: 'history', labelKey: 'nav.history', icon: History },
 ]
 
-
 interface Props {
   children: React.ReactNode
 }
@@ -65,7 +64,6 @@ export function MainLayout({ children }: Props) {
               </motion.button>
             )
           })}
-
         </nav>
       </aside>
 

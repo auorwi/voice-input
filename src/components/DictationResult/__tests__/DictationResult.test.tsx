@@ -26,7 +26,9 @@ const second = { sessionId: 'recording-2', text: '第二段完整文字。', rea
 
 function deferred<T>() {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>((finish) => { resolve = finish })
+  const promise = new Promise<T>((finish) => {
+    resolve = finish
+  })
   return { promise, resolve }
 }
 
@@ -47,9 +49,12 @@ describe('DictationResult', () => {
     expect(editor).not.toHaveAttribute('readonly')
     fireEvent.change(editor, { target: { value: '修正后的文字\n第二行 🎙️' } })
     fireEvent.click(screen.getByRole('button', { name: '复制' }))
-    await waitFor(() => expect(native.invoke).toHaveBeenCalledWith('copy_pending_dictation_result', {
-      sessionId: first.sessionId, editedText: '修正后的文字\n第二行 🎙️',
-    }))
+    await waitFor(() =>
+      expect(native.invoke).toHaveBeenCalledWith('copy_pending_dictation_result', {
+        sessionId: first.sessionId,
+        editedText: '修正后的文字\n第二行 🎙️',
+      }),
+    )
     expect(await screen.findByText('已复制')).toBeInTheDocument()
   })
 
@@ -62,7 +67,9 @@ describe('DictationResult', () => {
     const editor = await screen.findByRole('textbox')
     fireEvent.change(editor, { target: { value: '第一条的草稿' } })
     results = [first, second]
-    await act(async () => { native.listeners.get('dictation-result:changed')?.({ payload: null }) })
+    await act(async () => {
+      native.listeners.get('dictation-result:changed')?.({ payload: null })
+    })
     expect(screen.getByRole('textbox')).toHaveValue('第一条的草稿')
     fireEvent.click(screen.getByRole('button', { name: /2.*第二段/ }))
     fireEvent.change(screen.getByRole('textbox'), { target: { value: '第二条的草稿' } })
@@ -82,7 +89,10 @@ describe('DictationResult', () => {
     await screen.findByDisplayValue(first.text)
     fireEvent.click(screen.getByRole('button', { name: '复制' }))
     fireEvent.change(screen.getByRole('textbox'), { target: { value: '复制后又改过' } })
-    await act(async () => { copying.resolve(); await copying.promise })
+    await act(async () => {
+      copying.resolve()
+      await copying.promise
+    })
     expect(screen.queryByText('已复制')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /2.*第二段/ }))
     expect(screen.queryByText('已复制')).not.toBeInTheDocument()
@@ -116,7 +126,8 @@ describe('DictationResult', () => {
     fireEvent.click(screen.getByRole('button', { name: '复制' }))
     expect(await screen.findByText('已复制')).toBeInTheDocument()
     expect(native.invoke).toHaveBeenLastCalledWith('copy_pending_dictation_result', {
-      sessionId: first.sessionId, editedText: '失败也保留修改后的文字',
+      sessionId: first.sessionId,
+      editedText: '失败也保留修改后的文字',
     })
     expect(native.hide).not.toHaveBeenCalled()
   })
@@ -142,7 +153,10 @@ describe('DictationResult', () => {
     const editor = await screen.findByRole('textbox')
     fireEvent.keyDown(editor, { key: 'Escape', isComposing: true })
     fireEvent.keyDown(editor, { key: 'Escape', keyCode: 229 })
-    expect(native.invoke).not.toHaveBeenCalledWith('dismiss_pending_dictation_result', expect.anything())
+    expect(native.invoke).not.toHaveBeenCalledWith(
+      'dismiss_pending_dictation_result',
+      expect.anything(),
+    )
     expect(editor).toBeInTheDocument()
   })
 
@@ -171,7 +185,7 @@ describe('DictationResult', () => {
   })
 
   it('keeps a newer result visible when an older close list resolves empty last', async () => {
-    const oldList = deferred<typeof first[]>()
+    const oldList = deferred<(typeof first)[]>()
     let listCount = 0
     native.invoke.mockImplementation(async (name: string) => {
       if (name === 'dismiss_pending_dictation_result') return 0
@@ -186,16 +200,21 @@ describe('DictationResult', () => {
     await screen.findByDisplayValue(first.text)
     fireEvent.click(screen.getByRole('button', { name: '关闭' }))
     await waitFor(() => expect(listCount).toBe(2))
-    await act(async () => { native.listeners.get('dictation-result:changed')?.({ payload: null }) })
+    await act(async () => {
+      native.listeners.get('dictation-result:changed')?.({ payload: null })
+    })
     expect(await screen.findByDisplayValue(second.text)).toBeInTheDocument()
-    await act(async () => { oldList.resolve([]); await oldList.promise })
+    await act(async () => {
+      oldList.resolve([])
+      await oldList.promise
+    })
     expect(screen.getByDisplayValue(second.text)).toBeInTheDocument()
     expect(native.hide).not.toHaveBeenCalled()
   })
 
   it('discards a stale list while dismissal and a newer publish overlap', async () => {
     const dismissal = deferred<number>()
-    const oldList = deferred<typeof first[]>()
+    const oldList = deferred<(typeof first)[]>()
     let listCount = 0
     native.invoke.mockImplementation(async (name: string) => {
       if (name === 'dismiss_pending_dictation_result') return dismissal.promise
@@ -209,11 +228,19 @@ describe('DictationResult', () => {
     render(<DictationResult />)
     await screen.findByDisplayValue(first.text)
     fireEvent.click(screen.getByRole('button', { name: '关闭' }))
-    await act(async () => { native.listeners.get('dictation-result:changed')?.({ payload: null }) })
+    await act(async () => {
+      native.listeners.get('dictation-result:changed')?.({ payload: null })
+    })
     await waitFor(() => expect(listCount).toBe(2))
-    await act(async () => { dismissal.resolve(1); await dismissal.promise })
+    await act(async () => {
+      dismissal.resolve(1)
+      await dismissal.promise
+    })
     expect(await screen.findByDisplayValue(second.text)).toBeInTheDocument()
-    await act(async () => { oldList.resolve([first]); await oldList.promise })
+    await act(async () => {
+      oldList.resolve([first])
+      await oldList.promise
+    })
     expect(screen.getByDisplayValue(second.text)).toBeInTheDocument()
     expect(native.hide).not.toHaveBeenCalled()
   })
