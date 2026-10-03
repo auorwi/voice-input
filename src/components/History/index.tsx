@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useTranslation } from 'react-i18next'
-import { Search, Copy, Trash2, MoreHorizontal } from 'lucide-react'
+import { Search, Copy, Trash2, MoreHorizontal, X } from 'lucide-react'
 import { spring } from '../../lib/animations'
 import { useAppStore, type HistoryEntry } from '../../stores/appStore'
 import { addCorrectionRule, clearHistory, getCorrectionRules } from '../../lib/tauri'
@@ -135,9 +135,20 @@ export function History() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={t('history.searchPlaceholder')}
-            className="w-full pl-8 pr-3 py-2.5 bg-bg-secondary border border-border rounded-[14px] text-[13px] text-text-primary outline-none focus:ring-2 focus:ring-jelly-primary focus:border-jelly-primary transition-all jelly-btn"
+            className="w-full pl-8 pr-8 py-2.5 bg-bg-secondary border border-border rounded-[14px] text-[13px] text-text-primary outline-none focus:ring-2 focus:ring-jelly-primary focus:border-jelly-primary transition-all jelly-btn"
             style={{ transform: 'none' }}
           />
+          {search.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setSearch('')}
+              aria-label={t('history.clearSearch')}
+              title={t('history.clearSearch')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-[6px] bg-transparent border-none cursor-pointer text-text-tertiary hover:text-text-primary hover:bg-bg-tertiary transition-colors"
+            >
+              <X size={13} aria-hidden="true" />
+            </button>
+          )}
         </div>
       </div>
 

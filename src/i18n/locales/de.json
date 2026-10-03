@@ -636,6 +636,7 @@
     "title": "Verlauf",
     "searchPlaceholder": "Verlauf durchsuchen...",
     "noResults": "Keine passenden Ergebnisse",
+    "clearSearch": "Suche löschen",
     "noHistory": "Noch kein Verlauf.",
     "noHistoryHint": "Drücken Sie Ihre Tastenkombination, um die Aufnahme zu starten. Ihre Transkriptionen werden hier angezeigt.",
     "today": "Heute",

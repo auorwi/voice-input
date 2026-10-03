@@ -636,6 +636,7 @@
     "title": "历史记录",
     "searchPlaceholder": "搜索历史记录...",
     "noResults": "没有匹配结果",
+    "clearSearch": "清除搜索",
     "noHistory": "暂无历史记录。",
     "noHistoryHint": "按下快捷键开始录音，转录内容将显示在这里。",
     "today": "今天",
