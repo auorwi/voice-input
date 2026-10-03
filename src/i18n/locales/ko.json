@@ -636,6 +636,7 @@
     "title": "기록",
     "searchPlaceholder": "기록 검색...",
     "noResults": "검색 결과가 없습니다",
+    "clearSearch": "검색 지우기",
     "noHistory": "아직 기록이 없습니다.",
     "noHistoryHint": "단축키를 눌러 녹음을 시작하면 변환 결과가 여기에 표시됩니다.",
     "today": "오늘",

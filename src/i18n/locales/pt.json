@@ -636,6 +636,7 @@
     "title": "Histórico",
     "searchPlaceholder": "Pesquisar no histórico...",
     "noResults": "Nenhum resultado encontrado",
+    "clearSearch": "Limpar pesquisa",
     "noHistory": "Nenhum histórico ainda.",
     "noHistoryHint": "Pressione seu atalho para iniciar a gravação e suas transcrições aparecerão aqui.",
     "today": "Hoje",

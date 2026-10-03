@@ -636,6 +636,7 @@
     "title": "履歴",
     "searchPlaceholder": "履歴を検索...",
     "noResults": "一致する結果がありません",
+    "clearSearch": "検索をクリア",
     "noHistory": "履歴はまだありません。",
     "noHistoryHint": "ホットキーを押して録音を開始すると、文字起こし結果がここに表示されます。",
     "today": "今日",

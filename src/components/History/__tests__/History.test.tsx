@@ -152,6 +152,7 @@ describe('History search filtering', () => {
 
   beforeEach(() => {
     useAppStore.setState({ history: [englishEntry, chineseEntry], correctionRules: [] })
+    vi.clearAllMocks()
   })
 
   afterEach(() => {
@@ -185,5 +186,44 @@ describe('History search filtering', () => {
     expect(screen.getByText('history.noResults')).toBeInTheDocument()
     expect(screen.queryByText('Hello World')).toBeNull()
     expect(screen.queryByText('你好世界')).toBeNull()
+  })
+
+  it('shows the clear button only for a non-empty search and restores the full list on click', () => {
+    render(<History />)
+    expect(screen.queryByRole('button', { name: 'history.clearSearch' })).toBeNull()
+
+    fireEvent.change(searchInput(), { target: { value: 'hello' } })
+    expect(screen.queryByText('你好世界')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'history.clearSearch' }))
+    expect(searchInput()).toHaveValue('')
+    expect(screen.queryByRole('button', { name: 'history.clearSearch' })).toBeNull()
+    expect(screen.getByText('Hello World')).toBeInTheDocument()
+    expect(screen.getByText('你好世界')).toBeInTheDocument()
+    expect(clearHistory).not.toHaveBeenCalled()
+  })
+
+  it('restores the full list after clearing a search with no matches', () => {
+    render(<History />)
+    fireEvent.change(searchInput(), { target: { value: 'zzz' } })
+    expect(screen.getByText('history.noResults')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'history.clearSearch' }))
+    expect(searchInput()).toHaveValue('')
+    expect(screen.getByText('Hello World')).toBeInTheDocument()
+    expect(screen.getByText('你好世界')).toBeInTheDocument()
+  })
+
+  it('treats a whitespace-only search as non-empty and can clear it', () => {
+    render(<History />)
+    fireEvent.change(searchInput(), { target: { value: ' ' } })
+    expect(screen.getByRole('button', { name: 'history.clearSearch' })).toBeInTheDocument()
+    expect(screen.getByText('Hello World')).toBeInTheDocument()
+    expect(screen.queryByText('你好世界')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'history.clearSearch' }))
+    expect(searchInput()).toHaveValue('')
+    expect(screen.getByText('Hello World')).toBeInTheDocument()
+    expect(screen.getByText('你好世界')).toBeInTheDocument()
   })
 })

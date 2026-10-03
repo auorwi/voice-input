@@ -636,6 +636,7 @@
     "title": "Historique",
     "searchPlaceholder": "Rechercher dans l'historique...",
     "noResults": "Aucun résultat correspondant",
+    "clearSearch": "Effacer la recherche",
     "noHistory": "Aucun historique pour l'instant.",
     "noHistoryHint": "Appuyez sur votre raccourci clavier pour démarrer l'enregistrement et vos transcriptions apparaîtront ici.",
     "today": "Aujourd'hui",
