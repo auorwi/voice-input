@@ -40,6 +40,29 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('DictationResult', () => {
+  it('shows an empty state once loading finishes with no pending results', async () => {
+    native.invoke.mockImplementation(async (name: string) =>
+      name === 'list_pending_dictation_results' ? [] : undefined,
+    )
+    render(<DictationResult />)
+    expect(await screen.findByText('暂无待处理结果')).toBeInTheDocument()
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+  })
+
+  it('does not show the empty state before the first load resolves', async () => {
+    const pending = deferred<(typeof first)[]>()
+    native.invoke.mockImplementation(async (name: string) =>
+      name === 'list_pending_dictation_results' ? pending.promise : undefined,
+    )
+    render(<DictationResult />)
+    expect(screen.queryByText('暂无待处理结果')).not.toBeInTheDocument()
+    await act(async () => {
+      pending.resolve([])
+      await pending.promise
+    })
+    expect(await screen.findByText('暂无待处理结果')).toBeInTheDocument()
+  })
+
   it('lets the user edit multiline text and copies exactly the edited draft', async () => {
     native.invoke.mockImplementation(async (name: string) =>
       name === 'list_pending_dictation_results' ? [first] : undefined,
