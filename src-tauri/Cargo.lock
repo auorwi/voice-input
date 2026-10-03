@@ -380,15 +380,6 @@ dependencies = [
 
 [[package]]
 name = "block2"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c132eebf10f5cad5289222520a4a058514204aed6d791f1cf4fe8088b82d15f"
-dependencies = [
- "objc2 0.5.2",
-]
-
-[[package]]
-name = "block2"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cdeb9d870516001442e364c5220d3574d2da8dc765554b4a617230d33fa58ef5"
@@ -3335,7 +3326,7 @@ dependencies = [
  "arboard",
  "async-trait",
  "base64 0.22.1",
- "block2 0.5.1",
+ "block2 0.6.2",
  "chrono",
  "cpal",
  "csv",
