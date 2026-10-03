@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { listen } from '@tauri-apps/api/event'
+import { Inbox } from 'lucide-react'
 import {
   copyPendingDictationResult,
   dismissPendingDictationResult,
@@ -27,6 +28,7 @@ export function DictationResult() {
   } | null>(null)
   const [busy, setBusy] = useState(false)
   const [loadError, setLoadError] = useState(false)
+  const [hasLoaded, setHasLoaded] = useState(false)
   const latestRefresh = useRef(0)
   const selected = results.find((item) => item.sessionId === selectedId) ?? results[0]
   const selectedText = selected ? (drafts[selected.sessionId] ?? selected.text) : ''
@@ -51,6 +53,7 @@ export function DictationResult() {
           pending.find((item) => item.sessionId === id)?.sessionId ?? pending[0]?.sessionId ?? null,
       )
       setLoadError(false)
+      setHasLoaded(true)
     } catch {
       if (request === latestRefresh.current) setLoadError(true)
     }
@@ -153,6 +156,13 @@ export function DictationResult() {
             </button>
           ))}
         </nav>
+      )}
+      {hasLoaded && !loadError && results.length === 0 && (
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center">
+          <Inbox aria-hidden size={32} className="text-text-tertiary" />
+          <p className="text-sm text-text-secondary">暂无待处理结果</p>
+          <p className="text-xs text-text-tertiary">当语音输入无法自动填入时，文字会保留在这里。</p>
+        </div>
       )}
       {selected && (
         <>
